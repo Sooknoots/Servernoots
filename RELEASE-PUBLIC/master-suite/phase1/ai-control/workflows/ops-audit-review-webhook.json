@@ -1,0 +1,138 @@
+[
+  {
+    "id": "3f75f7c4-3cf8-492b-b84e-e8134b89d210",
+    "name": "Day4 - Ops Audit Review",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ops-audit-review",
+          "responseMode": "onReceived"
+        },
+        "id": "webhook_ops_audit",
+        "webhookId": "ops-audit-review",
+        "name": "Webhook Ops Audit",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          220,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const body = $json.body || $json;\nconst rawMessage = String(body.message ?? '').trim();\nconst parsedNum = Number((rawMessage.match(/\\d+/) || [])[0] || 10);\nconst lines = Math.max(1, Math.min(50, Number.isFinite(parsedNum) ? parsedNum : 10));\nconst requester = String(body.topic ?? body.requester ?? 'ops-audit');\nreturn { lines, requester };"
+        },
+        "id": "parse_audit_request",
+        "name": "Parse Audit Request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "=http://audit-log-viewer:18081/last?lines={{$json.lines}}",
+          "options": {}
+        },
+        "id": "fetch_audit_tail",
+        "name": "Fetch Audit Tail",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          780,
+          260
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const req = $item(0).$node['Parse Audit Request'].json;\nlet bodyText = String($json.data ?? $json.body ?? '').trim();\nif (!bodyText) {\n  bodyText = String($json.message ?? $json.error ?? 'audit log unavailable').trim();\n}\nif (bodyText.length > 3200) {\n  bodyText = `${bodyText.slice(-3200)}`;\n}\nconst header = `Audit log review (last ${req.lines}) by ${req.requester}`;\nreturn { opsMessage: `${header}\\n${bodyText}` };"
+        },
+        "id": "format_audit_tail",
+        "name": "Format Audit Tail",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1060,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_ALERT_TOPIC || 'ops-alerts'}`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.opsMessage}}",
+          "options": {}
+        },
+        "id": "post_ops_audit",
+        "name": "Post Ops Audit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1340,
+          260
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Ops Audit": {
+        "main": [
+          [
+            {
+              "node": "Parse Audit Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Audit Request": {
+        "main": [
+          [
+            {
+              "node": "Fetch Audit Tail",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Audit Tail": {
+        "main": [
+          [
+            {
+              "node": "Format Audit Tail",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Audit Tail": {
+        "main": [
+          [
+            {
+              "node": "Post Ops Audit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "staticData": null,
+    "tags": []
+  }
+]

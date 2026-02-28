@@ -1,0 +1,328 @@
+services:
+  ollama-loopback-proxy:
+    image: alpine/socat:latest
+    container_name: ollama-loopback-proxy
+    restart: unless-stopped
+    network_mode: host
+    command: TCP-LISTEN:11435,reuseaddr,fork,bind=0.0.0.0 TCP:127.0.0.1:11434
+
+  openwhisper:
+    build:
+      context: ./openwhisper
+    image: servernoots/openwhisper:local
+    container_name: openwhisper
+    restart: unless-stopped
+    environment:
+      - OPENWHISPER_MODEL=${OPENWHISPER_MODEL:-small}
+      - OPENWHISPER_DEVICE=${OPENWHISPER_DEVICE:-cpu}
+      - OPENWHISPER_COMPUTE_TYPE=${OPENWHISPER_COMPUTE_TYPE:-int8}
+      - OPENWHISPER_BEAM_SIZE=${OPENWHISPER_BEAM_SIZE:-1}
+      - OPENWHISPER_LANGUAGE=${OPENWHISPER_LANGUAGE:-}
+      - OPENWHISPER_PORT=9000
+    ports:
+      - 127.0.0.1:${OPENWHISPER_HOST_PORT:-9001}:9000
+    volumes:
+      - openwhisper-model-cache:/root/.cache/huggingface
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:8025:8025
+      - 127.0.0.1:1025:1025
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      - ollama-loopback-proxy
+      - openwhisper
+    ports:
+      - 127.0.0.1:5678:5678
+    environment:
+      - TZ=America/Chicago
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - WEBHOOK_URL=http://localhost:5678/
+      - ROUTING_DEBUG=true
+      - WEB_SEARCH_ENABLED=true
+      - WEB_SEARCH_URL=https://api.duckduckgo.com/
+      - STT_BASE_URL=${STT_BASE_URL:-http://openwhisper:9000}
+      - STT_TRANSCRIPT_PATH=${STT_TRANSCRIPT_PATH:-/v1/audio/transcriptions}
+      - STT_MODEL=${STT_MODEL:-whisper-1}
+      - STT_DEBUG_RESPONSE_ENABLED=${STT_DEBUG_RESPONSE_ENABLED:-false}
+      - NTFY_BASE=${NTFY_BASE:-http://ntfy}
+      - NTFY_ALERT_TOPIC=${NTFY_ALERT_TOPIC:-ops-alerts}
+      - NTFY_REPLIES_TOPIC=${NTFY_REPLIES_TOPIC:-ai-replies}
+      - NTFY_AUDIT_TOPIC=${NTFY_AUDIT_TOPIC:-ai-audit}
+      - RESEARCH_NEXTCLOUD_BASE_URL=${RESEARCH_NEXTCLOUD_BASE_URL:-http://nextcloud}
+      - RESEARCH_NEXTCLOUD_USER=${RESEARCH_NEXTCLOUD_USER:-admin}
+      - RESEARCH_NEXTCLOUD_PASSWORD=${RESEARCH_NEXTCLOUD_PASSWORD:-}
+      - RESEARCH_NEXTCLOUD_FOLDER=${RESEARCH_NEXTCLOUD_FOLDER:-research-reports}
+      - POLICY_FILE=${POLICY_FILE:-/opt/policy/policy.v1.yaml}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - default
+      - ntfy_net
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./guardrails:/opt/guardrails:ro
+      - ./policy:/opt/policy:ro
+      - ./workflows:/opt/workflows:ro
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:6333:6333
+      - 127.0.0.1:6334:6334
+    volumes:
+      - qdrant-storage:/qdrant/storage
+
+  nextcloud-db:
+    image: postgres:16-alpine
+    container_name: nextcloud-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${NEXTCLOUD_DB_NAME:-nextcloud}
+      - POSTGRES_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-change_me_nextcloud_db_password}
+    volumes:
+      - nextcloud-db:/var/lib/postgresql/data
+
+  nextcloud:
+    image: nextcloud:29-apache
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      - nextcloud-db
+    ports:
+      - 127.0.0.1:${NEXTCLOUD_HOST_PORT:-8085}:80
+    environment:
+      - POSTGRES_HOST=nextcloud-db
+      - POSTGRES_DB=${NEXTCLOUD_DB_NAME:-nextcloud}
+      - POSTGRES_USER=${NEXTCLOUD_DB_USER:-nextcloud}
+      - POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD:-change_me_nextcloud_db_password}
+      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER:-admin}
+      - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD:-change_me_nextcloud_admin_password}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS:-localhost 127.0.0.1}
+      - OVERWRITEHOST=${NEXTCLOUD_OVERWRITEHOST:-}
+      - OVERWRITEPROTOCOL=${NEXTCLOUD_OVERWRITEPROTOCOL:-}
+    volumes:
+      - nextcloud-data:/var/www/html
+
+  audit-log-viewer:
+    image: python:3.12-alpine
+    container_name: audit-log-viewer
+    restart: unless-stopped
+    environment:
+      - AUDIT_LOG=/opt/guardrails/audit.log
+      - AUDIT_PORT=18081
+      - AUDIT_DEFAULT_LINES=10
+      - AUDIT_MAX_LINES=50
+    networks:
+      - default
+    volumes:
+      - ./bridge/auditlog_server.py:/app/auditlog_server.py:ro
+      - ./guardrails:/opt/guardrails:ro
+    command: python /app/auditlog_server.py
+
+  ntfy-n8n-bridge:
+    image: python:3.12-alpine
+    container_name: ntfy-n8n-bridge
+    restart: unless-stopped
+    depends_on:
+      - n8n
+      - audit-log-viewer
+    environment:
+      - NTFY_BASE=http://ntfy
+      - N8N_BASE=http://n8n:5678
+      - POLL_SECONDS=10
+      - HTTP_TIMEOUT=65
+      - POLL_REQUEST_TIMEOUT_SECONDS=8
+      - STATE_FILE=/state/bridge_state.json
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_USER_REGISTRY=/telegram-state/telegram_users.json
+      - TELEGRAM_NOTIFICATIONS_ENABLED=${TELEGRAM_NOTIFICATIONS_ENABLED:-true}
+      - TELEGRAM_NOTIFY_CRITICAL_ONLY=${TELEGRAM_NOTIFY_CRITICAL_ONLY:-true}
+      - TELEGRAM_NOTIFY_MIN_PRIORITY=${TELEGRAM_NOTIFY_MIN_PRIORITY:-5}
+      - TELEGRAM_NOTIFY_MAX_MESSAGE_CHARS=${TELEGRAM_NOTIFY_MAX_MESSAGE_CHARS:-280}
+      - TELEGRAM_NOTIFY_DROP_PATTERNS=${TELEGRAM_NOTIFY_DROP_PATTERNS:-smoke test,direct fanout,log check}
+      - TELEGRAM_MEDIA_NOISE_FILTER_ENABLED=${TELEGRAM_MEDIA_NOISE_FILTER_ENABLED:-true}
+      - TELEGRAM_MEDIA_NOISE_MARKERS=${TELEGRAM_MEDIA_NOISE_MARKERS:-synthetic_id=,media synthetic check media-synthetic-,media sweep probe,media cursor probe,cursor_probe=,verification_run=,quiet_topic_drill=,media ready verification}
+      - TELEGRAM_MEDIA_FIRST_SEEN_ONLY_ENABLED=${TELEGRAM_MEDIA_FIRST_SEEN_ONLY_ENABLED:-true}
+      - TELEGRAM_MEDIA_FIRST_SEEN_RETENTION_SECONDS=${TELEGRAM_MEDIA_FIRST_SEEN_RETENTION_SECONDS:-31536000}
+      - TELEGRAM_DEDUPE_WINDOW_SECONDS=${TELEGRAM_DEDUPE_WINDOW_SECONDS:-120}
+      - TELEGRAM_DEDUPE_WINDOW_SECONDS_BY_TOPIC=${TELEGRAM_DEDUPE_WINDOW_SECONDS_BY_TOPIC:-ops-alerts=60,ops-audit=45,media-alerts=90}
+      - TELEGRAM_MEDIA_FIRST_SEEN_STATE=/state/telegram_media_first_seen.json
+      - TELEGRAM_DEDUPE_STATE=/state/telegram_dedupe_state.json
+      - TELEGRAM_NOTIFY_STATS_STATE=/state/telegram_notify_stats.json
+      - TELEGRAM_NOTIFY_STATS_RETENTION_SECONDS=${TELEGRAM_NOTIFY_STATS_RETENTION_SECONDS:-86400}
+      - TELEGRAM_SEND_MAX_RETRIES=${TELEGRAM_SEND_MAX_RETRIES:-2}
+      - TELEGRAM_SEND_BACKOFF_SECONDS=${TELEGRAM_SEND_BACKOFF_SECONDS:-1.0}
+      - TELEGRAM_SEND_BACKOFF_MAX_SECONDS=${TELEGRAM_SEND_BACKOFF_MAX_SECONDS:-8.0}
+      - TELEGRAM_AUTO_QUARANTINE_ENABLED=${TELEGRAM_AUTO_QUARANTINE_ENABLED:-true}
+      - TELEGRAM_AUTO_QUARANTINE_THRESHOLD=${TELEGRAM_AUTO_QUARANTINE_THRESHOLD:-3}
+      - TELEGRAM_AUTO_QUARANTINE_SECONDS=${TELEGRAM_AUTO_QUARANTINE_SECONDS:-86400}
+      - TELEGRAM_STATE_BACKEND=${TELEGRAM_STATE_BACKEND:-json}
+      - TELEGRAM_STATE_SQLITE_PATH=${TELEGRAM_STATE_SQLITE_PATH:-/state/telegram_state.db}
+      - TELEGRAM_DIGEST_QUEUE_STATE=/state/telegram_digest_queue.json
+      - TELEGRAM_QUIET_HOURS_UTC_OFFSET_HOURS=${TELEGRAM_QUIET_HOURS_UTC_OFFSET_HOURS:-0}
+      - TELEGRAM_DIGEST_MAX_ITEMS_PER_USER=${TELEGRAM_DIGEST_MAX_ITEMS_PER_USER:-50}
+      - TELEGRAM_DIGEST_LINE_MAX_CHARS=${TELEGRAM_DIGEST_LINE_MAX_CHARS:-120}
+      - TELEGRAM_INCIDENT_STATE=/state/telegram_incidents.json
+      - TELEGRAM_INCIDENT_ACK_TTL_SECONDS=${TELEGRAM_INCIDENT_ACK_TTL_SECONDS:-21600}
+      - TELEGRAM_INCIDENT_RETENTION_SECONDS=${TELEGRAM_INCIDENT_RETENTION_SECONDS:-604800}
+      - TELEGRAM_INCIDENT_COLLAPSE_ENABLED=${TELEGRAM_INCIDENT_COLLAPSE_ENABLED:-true}
+      - TELEGRAM_INCIDENT_COLLAPSE_WINDOW_SECONDS=${TELEGRAM_INCIDENT_COLLAPSE_WINDOW_SECONDS:-900}
+      - OVERSEERR_URL=${OVERSEERR_URL:-http://host.docker.internal:5055}
+      - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
+      - TELEGRAM_MEDIA_READY_GATE_ENABLED=${TELEGRAM_MEDIA_READY_GATE_ENABLED:-true}
+      - TELEGRAM_MEDIA_READY_STATUS_REQUIRED=${TELEGRAM_MEDIA_READY_STATUS_REQUIRED:-5}
+      - POLICY_FILE=${POLICY_FILE:-/app/policy/policy.v1.yaml}
+    networks:
+      - default
+      - ntfy_net
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./bridge/ntfy_to_n8n.py:/app/ntfy_to_n8n.py:ro
+      - ./bridge/policy_loader.py:/app/policy_loader.py:ro
+      - ./policy:/app/policy:ro
+      - ntfy-bridge-state:/state
+      - telegram-bridge-state:/telegram-state
+    command: python /app/ntfy_to_n8n.py
+
+  telegram-n8n-bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile.telegram
+    image: servernoots/telegram-n8n-bridge:local
+    container_name: telegram-n8n-bridge
+    restart: unless-stopped
+    depends_on:
+      - n8n
+      - mailpit
+    ports:
+      - 127.0.0.1:${TELEGRAM_TEXTBOOK_DOWNLOAD_HOST_PORT:-8113}:8113
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:-}
+      - TELEGRAM_BOOTSTRAP_ADMINS=${TELEGRAM_BOOTSTRAP_ADMINS:-}
+      - TELEGRAM_NOTIFY_QUARANTINE_CLEAR_ALL_ADMINS=${TELEGRAM_NOTIFY_QUARANTINE_CLEAR_ALL_ADMINS:-}
+      - TELEGRAM_POLL_TIMEOUT=50
+      - N8N_BASE=http://n8n:5678
+      - N8N_RAG_WEBHOOK=/webhook/rag-query
+      - N8N_RAG_INGEST_WEBHOOK=${N8N_RAG_INGEST_WEBHOOK:-/webhook/rag-ingest}
+      - N8N_OPS_WEBHOOK=/webhook/ops-commands-ingest
+      - N8N_TEXTBOOK_WEBHOOK=${N8N_TEXTBOOK_WEBHOOK:-/webhook/textbook-fulfillment}
+      - N8N_RESEARCH_WEBHOOK=${N8N_RESEARCH_WEBHOOK:-/webhook/deep-research}
+      - RESEARCH_NEXTCLOUD_BASE_URL=${RESEARCH_NEXTCLOUD_BASE_URL:-http://nextcloud}
+      - RESEARCH_NEXTCLOUD_USER=${RESEARCH_NEXTCLOUD_USER:-admin}
+      - RESEARCH_NEXTCLOUD_PASSWORD=${RESEARCH_NEXTCLOUD_PASSWORD:-}
+      - RESEARCH_NEXTCLOUD_FOLDER=${RESEARCH_NEXTCLOUD_FOLDER:-research-reports}
+      - TEXTBOOK_SMTP_HOST=${TEXTBOOK_SMTP_HOST:-}
+      - TEXTBOOK_SMTP_PORT=${TEXTBOOK_SMTP_PORT:-587}
+      - TEXTBOOK_SMTP_USER=${TEXTBOOK_SMTP_USER:-}
+      - TEXTBOOK_SMTP_PASSWORD=${TEXTBOOK_SMTP_PASSWORD:-}
+      - TEXTBOOK_SMTP_FROM=${TEXTBOOK_SMTP_FROM:-}
+      - TEXTBOOK_SMTP_USE_SSL=${TEXTBOOK_SMTP_USE_SSL:-false}
+      - TEXTBOOK_SMTP_USE_STARTTLS=${TEXTBOOK_SMTP_USE_STARTTLS:-true}
+      - TEXTBOOK_SEARCH_PROVIDERS=${TEXTBOOK_SEARCH_PROVIDERS:-googlebooks,openlibrary,internetarchive,gutendex}
+      - TEXTBOOK_ENFORCE_FILE_DOMAIN_ALLOWLIST=${TEXTBOOK_ENFORCE_FILE_DOMAIN_ALLOWLIST:-true}
+      - TEXTBOOK_ALLOWED_FILE_DOMAINS=${TEXTBOOK_ALLOWED_FILE_DOMAINS:-example.edu,books.google.com,openlibrary.org,archive.org,gutenberg.org,www.gutenberg.org,*.edu,*.gov}
+      - TELEGRAM_DEFAULT_MODE=rag
+      - TELEGRAM_NOTIFICATIONS_ENABLED=${TELEGRAM_NOTIFICATIONS_ENABLED:-true}
+      - TELEGRAM_NOTIFY_CRITICAL_ONLY=${TELEGRAM_NOTIFY_CRITICAL_ONLY:-true}
+      - TELEGRAM_NOTIFY_MIN_PRIORITY=${TELEGRAM_NOTIFY_MIN_PRIORITY:-5}
+      - TELEGRAM_NOTIFY_MAX_MESSAGE_CHARS=${TELEGRAM_NOTIFY_MAX_MESSAGE_CHARS:-280}
+      - TELEGRAM_NOTIFY_DROP_PATTERNS=${TELEGRAM_NOTIFY_DROP_PATTERNS:-smoke test,direct fanout,log check}
+      - TELEGRAM_DEDUPE_WINDOW_SECONDS=${TELEGRAM_DEDUPE_WINDOW_SECONDS:-120}
+      - TELEGRAM_DEDUPE_WINDOW_SECONDS_BY_TOPIC=${TELEGRAM_DEDUPE_WINDOW_SECONDS_BY_TOPIC:-ops-alerts=60,ops-audit=45,media-alerts=90}
+      - POLICY_FILE=${POLICY_FILE:-/app/policy/policy.v1.yaml}
+      - TELEGRAM_NOTIFY_STATS_STATE=/ntfy-state/telegram_notify_stats.json
+      - TELEGRAM_DELIVERY_STATE=/ntfy-state/telegram_delivery_state.json
+      - TELEGRAM_DIGEST_QUEUE_STATE=/ntfy-state/telegram_digest_queue.json
+      - TELEGRAM_INCIDENT_STATE=/ntfy-state/telegram_incidents.json
+      - TELEGRAM_REQTRACK_STATE=/reqtrack-logs/media-request-tracker-state.json
+      - TELEGRAM_INCIDENT_ACK_TTL_SECONDS=${TELEGRAM_INCIDENT_ACK_TTL_SECONDS:-21600}
+      - TELEGRAM_INCIDENT_LIST_LIMIT=${TELEGRAM_INCIDENT_LIST_LIMIT:-8}
+      - TELEGRAM_PROFILE_SEED_PATH=${TELEGRAM_PROFILE_SEED_PATH:-/work/discord-seed/discord_user_profiles.json}
+      - TELEGRAM_PROFILE_MAX_CHARS=${TELEGRAM_PROFILE_MAX_CHARS:-2200}
+      - TELEGRAM_PROFILE_PREVIEW_CHARS=${TELEGRAM_PROFILE_PREVIEW_CHARS:-220}
+      - TELEGRAM_PROFILE_MATCH_HIGH_CONFIDENCE_MIN_SCORE=${TELEGRAM_PROFILE_MATCH_HIGH_CONFIDENCE_MIN_SCORE:-95}
+      - TELEGRAM_PROFILE_MATCH_HIGH_CONFIDENCE_MIN_GAP=${TELEGRAM_PROFILE_MATCH_HIGH_CONFIDENCE_MIN_GAP:-15}
+      - TELEGRAM_CHILD_GUARDRAILS_ENABLED=${TELEGRAM_CHILD_GUARDRAILS_ENABLED:-true}
+      - TELEGRAM_CHILD_ACCOUNT_ADULT_MIN_AGE=${TELEGRAM_CHILD_ACCOUNT_ADULT_MIN_AGE:-18}
+      - TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS=${TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS:-G,PG,TV-Y,TV-Y7,TV-G,TV-PG}
+      - TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_UNDER_13=${TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_UNDER_13:-G,PG,TV-Y,TV-Y7,TV-G,TV-PG}
+      - TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_13_15=${TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_13_15:-G,PG,PG-13,TV-Y,TV-Y7,TV-G,TV-PG,TV-14}
+      - TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_16_17=${TELEGRAM_CHILD_MEDIA_ALLOWED_RATINGS_16_17:-G,PG,PG-13,TV-Y,TV-Y7,TV-G,TV-PG,TV-14}
+      - TELEGRAM_CHILD_MEDIA_DENY_UNKNOWN_RATINGS=${TELEGRAM_CHILD_MEDIA_DENY_UNKNOWN_RATINGS:-true}
+      - TELEGRAM_CHILD_MEDIA_BLOCK_IF_ADULT_FLAG=${TELEGRAM_CHILD_MEDIA_BLOCK_IF_ADULT_FLAG:-true}
+      - TELEGRAM_CHILD_MEDIA_BLOCKED_GENRE_IDS=${TELEGRAM_CHILD_MEDIA_BLOCKED_GENRE_IDS:-27}
+      - TELEGRAM_CHILD_MEDIA_BLOCKED_KEYWORDS=${TELEGRAM_CHILD_MEDIA_BLOCKED_KEYWORDS:-nudity,sexual content,explicit sex,rape,gore,graphic violence,torture,profanity,blasphemy,drug use,substance abuse,self-harm,suicide,disturbing scenes}
+      - TELEGRAM_REPLY_SHOW_SOURCES=${TELEGRAM_REPLY_SHOW_SOURCES:-false}
+      - TELEGRAM_REPLY_MAX_CHARS=${TELEGRAM_REPLY_MAX_CHARS:-1800}
+      - TELEGRAM_LOW_SIGNAL_FILTER_ENABLED=${TELEGRAM_LOW_SIGNAL_FILTER_ENABLED:-true}
+      - TELEGRAM_LOW_SIGNAL_TOKEN_MAX_CHARS=${TELEGRAM_LOW_SIGNAL_TOKEN_MAX_CHARS:-2}
+      - TELEGRAM_RATE_LIMIT_NOTICE_DEBOUNCE_ENABLED=${TELEGRAM_RATE_LIMIT_NOTICE_DEBOUNCE_ENABLED:-true}
+      - TELEGRAM_ADMIN_COMMAND_COOLDOWN_SECONDS=${TELEGRAM_ADMIN_COMMAND_COOLDOWN_SECONDS:-15}
+      - TELEGRAM_ADMIN_COMMAND_COOLDOWN_COMMANDS=${TELEGRAM_ADMIN_COMMAND_COOLDOWN_COMMANDS:-/status,/ratelimit,/notify stats,/digest stats}
+      - TELEGRAM_BRIDGE_STATE=/state/telegram_bridge_state.json
+      - TELEGRAM_TEXTBOOK_STATE=/state/telegram_textbook_requests.json
+      - TELEGRAM_TEXTBOOK_REQUEST_TTL_SECONDS=${TELEGRAM_TEXTBOOK_REQUEST_TTL_SECONDS:-1800}
+      - TELEGRAM_TEXTBOOK_COVER_PREVIEW_ENABLED=${TELEGRAM_TEXTBOOK_COVER_PREVIEW_ENABLED:-true}
+      - TEXTBOOK_DOWNLOAD_LINK_ENABLED=${TEXTBOOK_DOWNLOAD_LINK_ENABLED:-true}
+      - TEXTBOOK_DOWNLOAD_PUBLIC_BASE_URL=${TEXTBOOK_DOWNLOAD_PUBLIC_BASE_URL:-http://127.0.0.1:${TELEGRAM_TEXTBOOK_DOWNLOAD_HOST_PORT:-8113}}
+      - TEXTBOOK_DOWNLOAD_BIND_HOST=0.0.0.0
+      - TEXTBOOK_DOWNLOAD_PORT=8113
+      - TEXTBOOK_DOWNLOAD_TTL_SECONDS=${TEXTBOOK_DOWNLOAD_TTL_SECONDS:-86400}
+      - TEXTBOOK_DOWNLOAD_MAX_BYTES=${TEXTBOOK_DOWNLOAD_MAX_BYTES:-52428800}
+      - TEXTBOOK_DOWNLOAD_CLEANUP_INTERVAL_SECONDS=${TEXTBOOK_DOWNLOAD_CLEANUP_INTERVAL_SECONDS:-300}
+      - TELEGRAM_TEXTBOOK_DOWNLOAD_STATE=/state/telegram_textbook_downloads.json
+      - TELEGRAM_TEXTBOOK_DOWNLOAD_DIR=/state/textbook-downloads
+      - TELEGRAM_WORKSPACE_STATE=/state/telegram_workspace_state.json
+      - TELEGRAM_WORKSPACE_TTL_SECONDS=${TELEGRAM_WORKSPACE_TTL_SECONDS:-86400}
+      - TELEGRAM_WORKSPACE_CLEANUP_INTERVAL_SECONDS=${TELEGRAM_WORKSPACE_CLEANUP_INTERVAL_SECONDS:-300}
+      - TELEGRAM_WORKSPACE_MAX_DOCS=${TELEGRAM_WORKSPACE_MAX_DOCS:-8}
+      - TELEGRAM_USER_REGISTRY=/state/telegram_users.json
+      - OVERSEERR_URL=${OVERSEERR_URL:-http://host.docker.internal:5055}
+      - OVERSEERR_API_KEY=${OVERSEERR_API_KEY:-}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks:
+      - default
+      - ntfy_net
+    volumes:
+      - ./bridge/telegram_to_n8n.py:/app/telegram_to_n8n.py:ro
+      - ./bridge/policy_loader.py:/app/policy_loader.py:ro
+      - ./policy:/app/policy:ro
+      - telegram-bridge-state:/state
+      - ntfy-bridge-state:/ntfy-state
+      - ./logs:/reqtrack-logs
+      - ./work/discord-seed:/work/discord-seed:ro
+    command: python /app/telegram_to_n8n.py
+
+volumes:
+  n8n-data:
+  qdrant-storage:
+  ntfy-bridge-state:
+  telegram-bridge-state:
+  openwhisper-model-cache:
+  nextcloud-db:
+  nextcloud-data:
+
+networks:
+  ntfy_net:
+    external: true
+    name: ntfy_default

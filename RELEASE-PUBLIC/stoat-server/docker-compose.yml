@@ -1,0 +1,37 @@
+services:
+  stoat-server:
+    build: .
+    container_name: stoat-server
+    restart: unless-stopped
+    environment:
+      - STOAT_ZIP=/data/Council of Degenerates.zip
+      - PORT=8787
+      - STOAT_AUTH_USER=${STOAT_AUTH_USER}
+      - STOAT_AUTH_PASS=${STOAT_AUTH_PASS}
+      - STOAT_AUTH_REALM=${STOAT_AUTH_REALM:-Stoat Archive}
+      - STOAT_ALLOW_WEAK_PASSWORD=${STOAT_ALLOW_WEAK_PASSWORD:-0}
+    expose:
+      - "8787"
+    volumes:
+      - /home/sook/Downloads/Council of Degenerates.zip:/data/Council of Degenerates.zip:ro
+
+  stoat-proxy:
+    image: caddy:2.8.4
+    container_name: stoat-proxy
+    restart: unless-stopped
+    depends_on:
+      - stoat-server
+    ports:
+      - "${STOAT_PROXY_HTTP_PORT:-8087}:80"
+      - "${STOAT_PROXY_HTTPS_PORT:-8447}:443"
+    environment:
+      - STOAT_PUBLIC_HOST=${STOAT_PUBLIC_HOST:-localhost}
+      - STOAT_ACME_EMAIL=${STOAT_ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - stoat_caddy_data:/data
+      - stoat_caddy_config:/config
+
+volumes:
+  stoat_caddy_data:
+  stoat_caddy_config:

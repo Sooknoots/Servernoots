@@ -1,0 +1,53 @@
+{
+  "bySlug": {
+    "jockie-music-fill_Yc3BtAwjNJ": "text",
+    "general-shitposting_6Rj-qcmTkR": "text",
+    "flaming-garbage_dMe07jtBA0": "text",
+    "dank_music_i9zPRN6hg5": "text",
+    "photo-trash-pile_09L7rLQMw0": "text",
+    "Chase's Arcanum_yxWItZcyvp": "voice",
+    "legos-for-nerds_g-ci3Il5vw": "text",
+    "miku-iz-shit_7xXgkEKNMT": "text",
+    "Spess Muhrines_Saa-4nFDWl": "voice",
+    "pet-posting_4yx52Qfoot": "text",
+    "Reece's Shitpost Lounge_sstP-S3v91": "voice",
+    "peak-photos_Wc0qvwvm0E": "text",
+    "group-games_Jap7dfTE_Y": "voice",
+    "vein-server_IkuMY_1-vI": "text",
+    "gram-memes_MseeZsklk2": "text"
+  },
+  "byKey": {
+    "jockie-music-fill": "text",
+    "general-shitposting": "text",
+    "flaming-garbage": "text",
+    "dank_music": "text",
+    "photo-trash-pile": "text",
+    "Chase's Arcanum": "voice",
+    "legos-for-nerds": "text",
+    "miku-iz-shit": "text",
+    "Spess Muhrines": "voice",
+    "pet-posting": "text",
+    "Reece's Shitpost Lounge": "voice",
+    "peak-photos": "text",
+    "Executive Assault 2": "voice",
+    "vein-server": "text",
+    "gram-memes": "text"
+  },
+  "byName": {
+    "jockie-music-fill": "text",
+    "general-shitposting": "text",
+    "flaming-garbage": "text",
+    "dank music": "text",
+    "photo-trash-pile": "text",
+    "Chase's Arcanum": "voice",
+    "legos-for-nerds": "text",
+    "miku-iz-shit": "text",
+    "Spess Muhrines": "voice",
+    "pet-posting": "text",
+    "Reece's Shitpost Lounge": "voice",
+    "peak-photos": "text",
+    "Executive Assault 2": "voice"
+    "vein-server": "text",
+    "gram-memes": "text"
+  }
+}

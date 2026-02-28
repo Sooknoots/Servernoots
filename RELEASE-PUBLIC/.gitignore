@@ -1,0 +1,12 @@
+# Ignore environment files and secrets
+.env
+.env.*
+*.sqlite
+*.db
+*.log
+__pycache__/
+node_modules/
+secrets.json
+*.bak
+*.swp
+.DS_Store

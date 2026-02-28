@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stoat Server</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-title">Stoat Server</div>
+        <input id="channelFilter" class="channel-filter" placeholder="Filter channels" />
+        <div id="channelList" class="channel-list"></div>
+      </aside>
+      <main class="main">
+        <div id="header" class="header">Select a channel</div>
+        <div id="messages" class="messages"></div>
+        <div class="pager">
+          <button id="loadMore" class="btn" disabled>Load older messages</button>
+        </div>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+  </html>

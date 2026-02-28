@@ -1,0 +1,229 @@
+[
+  {
+    "id": "9d7b1f70-6e42-4a71-a1a8-4ec8d1b43d11",
+    "name": "Day4 - RAG Ingest",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "rag-ingest",
+          "responseMode": "onReceived"
+        },
+        "id": "webhook_rag_ingest",
+        "webhookId": "rag-ingest",
+        "name": "Webhook RAG Ingest",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          220,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const body = $json.body || $json;\nconst text = String(body.text ?? body.message ?? '').trim();\nconst chunk = text.slice(0, 1400);\nconst source_name = String(body.source_name ?? 'manual-note');\nconst source_type = String(body.source_type ?? 'manual');\nconst doc_id = String(body.doc_id ?? `doc-${Date.now()}`);\nconst ingest_date = new Date().toISOString();\nconst userId = body.user_id ?? null;\nconst tenantRaw = String(body.tenant_id ?? (userId ? `u_${userId}` : 'shared_public'));\nconst tenant_id = tenantRaw.toLowerCase().replace(/[^a-z0-9_]/g, '_');\nconst role = String(body.role ?? 'user').toLowerCase();\nconst collection_name = `day4_rag_${tenant_id}`;\nif (body.tenant_id && userId && tenant_id !== `u_${userId}` && role !== 'admin') {\n  return { ingestError: 'tenant mismatch for non-admin user' };\n}\nif (!chunk) {\n  return { ingestError: 'No text content provided' };\n}\nreturn { source_name, source_type, doc_id, ingest_date, chunk_text: chunk, chunk_index: 0, tenant_id, role, collection_name };"
+        },
+        "id": "normalize_ingest",
+        "name": "Normalize Ingest",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:11435/api/embed",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ model: 'qwen2.5-coder:7b', input: $json.chunk_text }) }}",
+          "options": {}
+        },
+        "id": "embed_chunk",
+        "name": "Embed Chunk",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          700,
+          220
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const src = $item(0).$node['Normalize Ingest'].json;\nif (src.ingestError) {\n  return { ingestError: src.ingestError };\n}\nconst vector = Array.isArray($json.embeddings) ? $json.embeddings[0] : [];\nif (!Array.isArray(vector) || vector.length === 0) {\n  const message = String($json.message ?? $json.error ?? 'embedding_failed');\n  return { ingestError: `Embedding failed: ${message}` };\n}\nconst id = Date.now();\nconst payload = {\n  source_name: src.source_name,\n  source_type: src.source_type,\n  ingest_date: src.ingest_date,\n  doc_id: src.doc_id,\n  chunk_index: src.chunk_index,\n  chunk_text: src.chunk_text,\n  tenant_id: src.tenant_id\n};\nreturn { point_id: id, vector, payload, collection_name: src.collection_name };"
+        },
+        "id": "build_upsert",
+        "name": "Build Upsert",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          940,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ `http://qdrant:6333/collections/${$json.collection_name}` }}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ vectors: { size: Array.isArray($json.vector) ? $json.vector.length : 1536, distance: 'Cosine' } }) }}",
+          "options": {}
+        },
+        "id": "ensure_collection",
+        "name": "Ensure Collection",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1180,
+          80
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "method": "PUT",
+          "url": "={{ `http://qdrant:6333/collections/${$item(0).$node['Build Upsert'].json.collection_name}/points?wait=true` }}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ points: [{ id: $item(0).$node['Build Upsert'].json.point_id, vector: $item(0).$node['Build Upsert'].json.vector, payload: $item(0).$node['Build Upsert'].json.payload }] }) }}",
+          "options": {}
+        },
+        "id": "upsert_qdrant",
+        "name": "Upsert Qdrant",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1420,
+          220
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const staged = $item(0).$node['Build Upsert'].json;\nif (staged.ingestError) {\n  return { opsMessage: `RAG ingest denied: ${staged.ingestError}` };\n}\nconst ok = $json.status === 'ok' || $json.result?.status === 'ok' || $json.result === true;\nif (!ok) {\n  return { opsMessage: `RAG ingest failed for ${staged.payload?.doc_id || 'unknown_doc'}` };\n}\nreturn { opsMessage: `RAG ingest indexed doc=${staged.payload.doc_id} source=${staged.payload.source_name}` };"
+        },
+        "id": "format_ingest_status",
+        "name": "Format Ingest Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1660,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_ALERT_TOPIC || 'ops-alerts'}`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.opsMessage}}",
+          "options": {}
+        },
+        "id": "post_ingest_status",
+        "name": "Post Ingest Status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1900,
+          220
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook RAG Ingest": {
+        "main": [
+          [
+            {
+              "node": "Normalize Ingest",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Ingest": {
+        "main": [
+          [
+            {
+              "node": "Embed Chunk",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Embed Chunk": {
+        "main": [
+          [
+            {
+              "node": "Build Upsert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Upsert": {
+        "main": [
+          [
+            {
+              "node": "Ensure Collection",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Ensure Collection": {
+        "main": [
+          [
+            {
+              "node": "Upsert Qdrant",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upsert Qdrant": {
+        "main": [
+          [
+            {
+              "node": "Format Ingest Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Ingest Status": {
+        "main": [
+          [
+            {
+              "node": "Post Ingest Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "staticData": null,
+    "tags": []
+  }
+]

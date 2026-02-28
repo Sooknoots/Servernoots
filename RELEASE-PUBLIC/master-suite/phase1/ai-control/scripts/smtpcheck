@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+ok() { echo "[OK] $*"; }
+warn() { echo "[WARN] $*"; }
+fail() { echo "[FAIL] $*"; exit 1; }
+
+if ! command -v docker >/dev/null 2>&1; then
+  fail "docker is not installed or not in PATH"
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+  fail "docker compose is not available"
+fi
+
+if ! docker compose ps --status running mailpit | grep -q mailpit; then
+  fail "mailpit is not running. Start with: docker compose up -d mailpit"
+fi
+ok "mailpit is running"
+
+if ! docker compose ps --status running telegram-n8n-bridge | grep -q telegram-n8n-bridge; then
+  fail "telegram-n8n-bridge is not running. Start with: docker compose up -d telegram-n8n-bridge"
+fi
+ok "telegram-n8n-bridge is running"
+
+SMTP_SUMMARY="$(docker compose exec -T telegram-n8n-bridge python3 -c "import os; keys=['TEXTBOOK_SMTP_HOST','TEXTBOOK_SMTP_PORT','TEXTBOOK_SMTP_FROM','TEXTBOOK_SMTP_USE_SSL','TEXTBOOK_SMTP_USE_STARTTLS']; [print(f'{k}=' + (os.getenv(k,'') or '(empty)')) for k in keys]")"
+echo "$SMTP_SUMMARY"
+
+if ! grep -q '^TEXTBOOK_SMTP_HOST=mailpit$' <<<"$SMTP_SUMMARY"; then
+  warn "TEXTBOOK_SMTP_HOST is not 'mailpit' in running container"
+fi
+
+if grep -q '^TEXTBOOK_SMTP_FROM=(empty)$' <<<"$SMTP_SUMMARY"; then
+  fail "TEXTBOOK_SMTP_FROM is empty in running container"
+fi
+
+MAILPIT_JSON="$(curl -fsS --max-time 10 http://127.0.0.1:8025/api/v1/messages)" || fail "Mailpit API not reachable at http://127.0.0.1:8025"
+MAILPIT_COUNT="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('total',0))" <<<"$MAILPIT_JSON")"
+ok "Mailpit API reachable"
+echo "mailpit_total_messages=$MAILPIT_COUNT"
+
+echo
+echo "SMTP healthcheck passed."

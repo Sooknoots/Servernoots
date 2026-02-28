@@ -1,0 +1,129 @@
+[
+  {
+    "id": "7b2f39cf-c2fd-4f5a-a3ef-61f6617d8d35",
+    "name": "Day7 - Textbook Fulfillment",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "textbook-fulfillment",
+          "responseMode": "lastNode"
+        },
+        "id": "webhook_textbook_fulfillment",
+        "webhookId": "textbook-fulfillment",
+        "name": "Webhook Textbook Fulfillment",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          240,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const body = $json.body || $json;\nconst details = String(body.textbook_request ?? '').trim();\nconst deliveryEmail = String(body.delivery_email ?? '').trim();\nconst lawfulOnly = Boolean(body.lawful_sources_only ?? true);\nconst validationSummary = String(body.validation_summary ?? '').trim();\nconst selected = (body.selected_candidate && typeof body.selected_candidate === 'object') ? body.selected_candidate : {};\nconst userId = String(body.user_id ?? '').trim();\nconst isEmail = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/.test(deliveryEmail);\nconst nowIso = new Date().toISOString();\nconst fulfillmentId = String(body.fulfillment_id ?? `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`).trim();\nconst deliveryMode = String(body.delivery_mode ?? 'ops_queue').trim() || 'ops_queue';\n\nif (!lawfulOnly) {\n  return {\n    ok: false,\n    queue_message: `TEXTBOOK_FULFILLMENT_DENIED user_id=${userId} fulfillment_id=${fulfillmentId} reason=lawful_only_required`,\n    reply: '⛔ Request denied: lawful_sources_only must be true.',\n    file_ready_for_email: false,\n    fulfillment_id: fulfillmentId,\n    delivery_status: 'denied_lawful_only',\n    delivery_mode: deliveryMode,\n    status_timeline: [`${nowIso}:denied_lawful_only`]\n  };\n}\n\nif (!details) {\n  return {\n    ok: false,\n    queue_message: `TEXTBOOK_FULFILLMENT_DENIED user_id=${userId} fulfillment_id=${fulfillmentId} reason=missing_request`,\n    reply: 'Please provide textbook details first and re-confirm.',\n    file_ready_for_email: false,\n    fulfillment_id: fulfillmentId,\n    delivery_status: 'denied_missing_request',\n    delivery_mode: deliveryMode,\n    status_timeline: [`${nowIso}:denied_missing_request`]\n  };\n}\n\nif (!isEmail) {\n  return {\n    ok: false,\n    queue_message: `TEXTBOOK_FULFILLMENT_DENIED user_id=${userId} fulfillment_id=${fulfillmentId} reason=missing_email details=${details.slice(0, 220)}`,\n    reply: 'Please set a valid delivery email and confirm again.',\n    file_ready_for_email: false,\n    fulfillment_id: fulfillmentId,\n    delivery_status: 'denied_missing_email',\n    delivery_mode: deliveryMode,\n    status_timeline: [`${nowIso}:denied_missing_email`]\n  };\n}\n\nconst safeSummary = validationSummary ? validationSummary.slice(0, 360).replace(/\\s+/g, ' ') : '(no summary)';\nconst queueMessage = `TEXTBOOK_FULFILLMENT_REQUEST user_id=${userId} fulfillment_id=${fulfillmentId} email=${deliveryEmail} details=${details.slice(0, 360)} validation=${safeSummary}`;\nconst selectedTitle = String(selected.title ?? '').trim();\nconst sourceName = selectedTitle || 'textbook-material';\nconst ingestText = `Textbook request: ${details}\\n\\nValidation summary: ${validationSummary || '(none)'}\\n\\nSelected candidate: ${JSON.stringify(selected)}`.slice(0, 12000);\n\nconst fileUrl = String(body.file_url ?? body.download_url ?? selected.source_url ?? '').trim();\nconst fileMime = String(body.file_mime ?? body.mime_type ?? '').trim();\nconst fileReadyForEmail = Boolean(fileUrl);\nconst deliveryStatus = fileReadyForEmail ? 'dispatch_ready' : 'queued_no_file';\nconst timeline = [\n  `${nowIso}:validated`,\n  `${nowIso}:${deliveryStatus}`\n];\n\nreturn {\n  ok: true,\n  queue_message: queueMessage,\n  file_ready_for_email: fileReadyForEmail,\n  ingest_text: ingestText,\n  ingest_source_name: sourceName,\n  file_url: fileUrl,\n  file_mime: fileMime,\n  fulfillment_id: fulfillmentId,\n  delivery_status: deliveryStatus,\n  delivery_mode: deliveryMode,\n  status_timeline: timeline,\n  reply: `✅ Textbook fulfillment queued for ${deliveryEmail}.\\nOnly lawful sources will be used.\\nValidation summary captured and sent to ops queue.\\nStatus: ${deliveryStatus}.\\nFulfillment ID: ${fulfillmentId}`\n};"
+        },
+        "id": "validate_and_format_textbook",
+        "name": "Validate and Format Textbook",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          520,
+          320
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_ALERT_TOPIC || 'ops-alerts'}?title=Textbook%20Fulfillment`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.queue_message}}",
+          "options": {}
+        },
+        "id": "post_textbook_ops_alert",
+        "name": "Post Textbook Ops Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          780,
+          220
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_AUDIT_TOPIC || 'ai-audit'}?title=Textbook%20Audit`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.queue_message}}",
+          "options": {}
+        },
+        "id": "post_textbook_audit",
+        "name": "Post Textbook Audit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          780,
+          420
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const staged = $item(0).$node['Validate and Format Textbook'].json;\nreturn {\n  reply: String(staged.reply || '✅ Textbook request received.'),\n  file_ready_for_email: Boolean(staged.file_ready_for_email),\n  ingest_text: String(staged.ingest_text || ''),\n  ingest_source_name: String(staged.ingest_source_name || ''),\n  file_url: String(staged.file_url || ''),\n  file_mime: String(staged.file_mime || ''),\n  fulfillment_id: String(staged.fulfillment_id || ''),\n  delivery_status: String(staged.delivery_status || ''),\n  delivery_mode: String(staged.delivery_mode || ''),\n  status_timeline: Array.isArray(staged.status_timeline) ? staged.status_timeline : []\n};"
+        },
+        "id": "return_textbook_reply",
+        "name": "Return Textbook Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1040,
+          320
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Textbook Fulfillment": {
+        "main": [
+          [
+            {
+              "node": "Validate and Format Textbook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate and Format Textbook": {
+        "main": [
+          [
+            {
+              "node": "Post Textbook Ops Alert",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Post Textbook Audit",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Return Textbook Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "staticData": null,
+    "tags": []
+  }
+]

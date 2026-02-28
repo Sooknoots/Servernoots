@@ -1,0 +1,4 @@
+guardrails/audit.log
+.env
+.env.secrets
+.env.local

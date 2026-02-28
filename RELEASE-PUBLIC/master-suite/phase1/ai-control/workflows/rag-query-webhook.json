@@ -1,0 +1,924 @@
+[
+  {
+    "updatedAt": "2026-02-28T01:46:25.000Z",
+    "createdAt": "2026-02-27T11:58:20.288Z",
+    "id": "e2f4c63a-6ac9-46ce-9ee4-39d1d8de9128",
+    "name": "Day4 - RAG Query",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "rag-query",
+          "responseMode": "lastNode"
+        },
+        "id": "webhook_rag_query",
+        "webhookId": "rag-query",
+        "name": "Webhook RAG Query",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          220,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+            "jsCode": "const body = $json.body || $json;\nconst rawMessage = String(body.message ?? body.question ?? '').trim();\nconst userId = body.user_id ?? null;\nconst role = String(body.role ?? 'user').toLowerCase();\nconst source = String(body.source ?? 'ntfy').toLowerCase();\nconst requestedTenantRaw = String(body.tenant_id ?? (userId ? `u_${userId}` : 'shared_public'));\nconst requestedTenant = requestedTenantRaw.toLowerCase().replace(/[^a-z0-9_]/g, '_');\nconst expectedTenant = userId ? `u_${String(userId).toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : '';\nconst enforceStrictTenant = source === 'telegram';\nconst tenantScopeViolation = enforceStrictTenant\n  ? (!expectedTenant || requestedTenant !== expectedTenant)\n  : (role !== 'admin' && (!expectedTenant || requestedTenant !== expectedTenant));\nconst effectiveTenant = enforceStrictTenant ? (expectedTenant || requestedTenant) : (role === 'admin' ? requestedTenant : (expectedTenant || requestedTenant));\nconst fullName = String(body.full_name ?? body.user_name ?? '').trim();\nconst telegramUsername = String(body.telegram_username ?? body.username ?? '').trim().toLowerCase();\nconst workspaceModeRaw = String(body.workspace_mode ?? 'auto').trim().toLowerCase();\nconst workspaceMode = ['auto', 'workspace', 'memory'].includes(workspaceModeRaw) ? workspaceModeRaw : 'auto';\nconst workspaceActive = Boolean(body.workspace_active ?? false);\nconst workspaceId = String(body.workspace_id ?? '').trim();\nconst workspaceExpiresAt = Number(body.workspace_expires_at ?? 0) || 0;\nconst workspaceDocIds = Array.isArray(body.workspace_doc_ids)\n  ? body.workspace_doc_ids.map((value) => String(value ?? '').trim()).filter(Boolean).slice(0, 200)\n  : [];\nconst workspaceContextOnly = Boolean(body.workspace_context_only ?? (workspaceMode === 'workspace'));\nconst memoryContextOnly = Boolean(body.memory_context_only ?? (workspaceMode === 'memory'));\nconst hasAudio = Boolean(body.has_audio ?? body.audio_url);\nconst memoryEnabled = Boolean(body.memory_enabled ?? false);\nconst memorySummary = String(body.memory_summary ?? '').trim().slice(0, 1200);\nconst voiceMemoryOptIn = Boolean(body.voice_memory_opt_in ?? memoryEnabled);\nconst memoryWriteModeRaw = String(body.memory_write_mode ?? '').trim().toLowerCase();\nconst memoryWriteMode = memoryWriteModeRaw || '';\nconst rawAudioPersist = body.raw_audio_persist === true;\nconst memoryLowConfidencePolicyRaw = String(body.memory_low_confidence_policy ?? '').trim().toLowerCase();\nconst memoryLowConfidencePolicy = ['allow', 'deny'].includes(memoryLowConfidencePolicyRaw) ? memoryLowConfidencePolicyRaw : '';\nconst memoryUpdatedAt = String(body.memory_updated_at ?? '').trim();\nconst speakerConfidenceRaw = body.speaker_confidence;\nconst speakerConfidenceNum = Number(speakerConfidenceRaw);\nconst speakerConfidence = Number.isFinite(speakerConfidenceNum)\n  ? Math.max(0, Math.min(1, speakerConfidenceNum))\n  : null;\nconst memoryMinSpeakerConfidenceRaw = Number(body.memory_min_speaker_confidence);\nconst memoryMinSpeakerConfidence = Number.isFinite(memoryMinSpeakerConfidenceRaw)\n  ? Math.max(0, Math.min(1, memoryMinSpeakerConfidenceRaw))\n  : null;\nconst memoryWriteAllowedInput = body.memory_write_allowed;\nconst memoryWriteAllowedComputed = speakerConfidence === null\n  ? true\n  : (memoryLowConfidencePolicy === 'allow'\n      ? true\n      : (memoryMinSpeakerConfidence === null ? true : speakerConfidence >= memoryMinSpeakerConfidence));\nconst memoryWriteAllowed = typeof memoryWriteAllowedInput === 'boolean'\n  ? memoryWriteAllowedInput\n  : memoryWriteAllowedComputed;\nconst memoryGateBlocked = hasAudio && !memoryWriteAllowed;\nconst memoryEnabledEffective = Boolean(body.memory_enabled_effective ?? voiceMemoryOptIn) && !memoryGateBlocked;\nconst memorySummaryEffective = memoryEnabledEffective\n  ? String(body.memory_summary_effective ?? memorySummary).trim().slice(0, 1200)\n  : '';\n\nconst userIdStr = String(userId ?? '').trim();\nconst actorId = String(body.interaction_user_id ?? userId ?? '').trim();\nconst activeRaw = body.active_user_ids;\nlet activeUserIds = [];\nif (Array.isArray(activeRaw)) {\n  activeUserIds = activeRaw.map((value) => String(value ?? '').trim()).filter(Boolean);\n} else if (typeof activeRaw === 'string') {\n  activeUserIds = activeRaw.split(',').map((value) => String(value || '').trim()).filter(Boolean);\n}\nconst explicitProfileAllowed = Boolean(body.profile_context_allowed ?? false);\nconst profileContextAllowed = source !== 'discord'\n  ? true\n  : (explicitProfileAllowed || (Boolean(userIdStr) && activeUserIds.includes(userIdStr)) || (Boolean(userIdStr) && actorId === userIdStr));\n\nconst userProfileSeed = profileContextAllowed\n  ? String(body.user_profile_seed ?? body.profile_seed ?? '').trim().slice(0, 3200)\n  : '';\nconst userProfileImageUrl = profileContextAllowed\n  ? String(body.user_profile_image_url ?? body.profile_image_url ?? '').trim().slice(0, 1000)\n  : '';\n\nreturn {\n  source,\n  chat_id: body.chat_id ?? null,\n  user_id: userId,\n  role,\n  tenant_id: effectiveTenant,\n  requested_tenant_id: requestedTenant,\n  expected_tenant_id: expectedTenant,\n  tenant_scope_violation: tenantScopeViolation,\n  collection_name: `day4_rag_${effectiveTenant}`,\n  question: rawMessage,\n  full_name: fullName,\n  telegram_username: telegramUsername,\n  tone_history: Array.isArray(body.tone_history) ? body.tone_history : [],\n  memory_enabled: memoryEnabledEffective,\n  memory_summary: memorySummaryEffective,\n  memory_enabled_raw: memoryEnabled,\n  memory_summary_raw: memorySummary,\n  voice_memory_opt_in: voiceMemoryOptIn,\n  memory_write_mode: memoryWriteMode,\n  raw_audio_persist: rawAudioPersist,\n  speaker_confidence: speakerConfidence,\n  memory_min_speaker_confidence: memoryMinSpeakerConfidence,\n  memory_write_allowed: memoryWriteAllowed,\n  memory_low_confidence_policy: memoryLowConfidencePolicy,\n  memory_updated_at: memoryUpdatedAt,\n  memory_gate_blocked: memoryGateBlocked,\n  workspace_mode: workspaceMode,\n  workspace_active: workspaceActive,\n  workspace_id: workspaceId,\n  workspace_expires_at: workspaceExpiresAt,\n  workspace_doc_ids: workspaceDocIds,\n  workspace_context_only: workspaceContextOnly,\n  memory_context_only: memoryContextOnly,\n  profile_context_allowed: profileContextAllowed,\n  interaction_user_id: actorId,\n  active_user_ids: activeUserIds,\n  user_profile_seed: userProfileSeed,\n  user_profile_image_url: userProfileImageUrl,\n  audio_url: body.audio_url ?? null,\n  has_audio: hasAudio,\n  image_url: body.image_url ?? null,\n  has_image: Boolean(body.has_image ?? body.image_url),\n  stt_debug_response_enabled: Boolean(body.stt_debug_response_enabled ?? false),\n  timestamp: body.timestamp ?? null,\n};"
+        },
+        "id": "normalize_query",
+        "name": "Normalize Query",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "var input = { ...$json };\nvar question = String(input.question ?? '').trim();\nvar transcriptionError = '';\n\nif (!question && input.has_audio && input.audio_url) {\n  try {\n    var env = (typeof process !== 'undefined' && process && process.env) ? process.env : {};\n    var sttBase = String(env.STT_BASE_URL ?? 'http://openwhisper:9000');\n    if (sttBase.endsWith('/')) sttBase = sttBase.slice(0, -1);\n    var sttPath = String(env.STT_TRANSCRIPT_PATH ?? '/v1/audio/transcriptions');\n    var sttModel = String(env.STT_MODEL ?? 'whisper-1');\n\n    if (!this || !this.helpers || typeof this.helpers.httpRequest !== 'function') {\n      throw new Error('httpRequest helper unavailable');\n    }\n\n    var sttUrl = `${sttBase}${sttPath}?source_url=${encodeURIComponent(String(input.audio_url))}&model=${encodeURIComponent(sttModel)}`;\n    var stt = await this.helpers.httpRequest({\n      method: 'POST',\n      url: sttUrl,\n      json: true,\n    });\n\n    question = String(stt.text ?? '').trim();\n  } catch (err) {\n    transcriptionError = String(err?.message ?? err);\n  }\n}\n\nif (!question) {\n  question = 'Please handle this voice/audio request. I could not transcribe usable text.';\n}\n\nvar webhookRaw = $item(0).$node['Webhook RAG Query'].json || {};\nvar webhookBody = webhookRaw.body && typeof webhookRaw.body === 'object' ? webhookRaw.body : webhookRaw;\nvar toneRaw = String(input.persona_pref_tone ?? webhookBody.persona_pref_tone ?? '').trim().toLowerCase();\nvar brevityRaw = String(input.persona_pref_brevity ?? webhookBody.persona_pref_brevity ?? '').trim().toLowerCase();\nvar personaPrefTone = ['warm', 'neutral', 'concise'].includes(toneRaw) ? toneRaw : '';\nvar personaPrefBrevity = ['short', 'balanced', 'detailed'].includes(brevityRaw) ? brevityRaw : '';\n\nreturn {\n  ...input,\n  question,\n  persona_pref_tone: personaPrefTone,\n  persona_pref_brevity: personaPrefBrevity,\n  transcription_error: transcriptionError,\n};"
+        },
+        "id": "resolve_audio_query",
+        "name": "Resolve Audio Query",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          700,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:11435/api/embed",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ model: 'qwen2.5-coder:7b', input: $json.question }) }}",
+          "options": {}
+        },
+        "id": "embed_query",
+        "name": "Embed Query",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          360
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ `http://qdrant:6333/collections/${$item(0).$node['Resolve Audio Query'].json.collection_name}/points/search` }}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ (() => { var query = $item(0).$node['Resolve Audio Query'].json || {}; var vector = (Array.isArray($json.embeddings) ? $json.embeddings[0] : []); var workspaceMode = String(query.workspace_mode || 'auto'); var workspaceDocIds = Array.isArray(query.workspace_doc_ids) ? query.workspace_doc_ids : []; var payload = { vector, limit: 3, with_payload: true }; if (workspaceMode === 'workspace') { payload.filter = workspaceDocIds.length ? { must: [ { key: 'source_type', match: { value: 'workspace_temp' } }, { key: 'doc_id', match: { any: workspaceDocIds } } ] } : { must: [ { key: 'source_type', match: { value: 'workspace_temp' } } ] }; } else if (workspaceMode === 'memory') { payload.filter = { must_not: [ { key: 'source_type', match: { value: 'workspace_temp' } } ] }; } return JSON.stringify(payload); })() }}",
+          "options": {}
+        },
+        "id": "search_qdrant",
+        "name": "Search Qdrant",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1180,
+          360
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const query = $item(0).$node['Resolve Audio Query'].json;\nconst question = String(query.question || '').trim();\nconst questionNorm = question.toLowerCase();\nconst rawResult = Array.isArray($json.result) ? $json.result : (Array.isArray($json.body?.result) ? $json.body.result : []);\nconst hits = rawResult;\nconst ragMinScore = 0.72;\nconst topScore = Number(hits[0]?.score ?? 0);\nconst contexts = [];\nconst sourceNames = [];\nfor (const hit of hits) {\n  const payload = hit.payload || {};\n  const sourceName = String(payload.source_name || 'unknown_source');\n  const chunkText = String(payload.chunk_text || '').slice(0, 500);\n  if (chunkText) contexts.push(`[${sourceName}] ${chunkText}`);\n  if (sourceName && !sourceNames.includes(sourceName)) sourceNames.push(sourceName);\n}\n\nconst displayName = (() => {\n  const fullName = String(query.full_name || '').trim();\n  const first = fullName.split(/\\s+/).filter(Boolean)[0] || '';\n  if (first) return first;\n  const uname = String(query.telegram_username || '').trim();\n  return uname ? `@${uname}` : 'there';\n})();\n\nconst userSummary = (() => {\n  const attrs = [];\n  if (query.role) attrs.push(`role=${query.role}`);\n  if (query.tenant_id) attrs.push(`tenant=${query.tenant_id}`);\n  if (query.telegram_username) attrs.push(`username=@${query.telegram_username}`);\n  if (query.full_name) attrs.push(`name=${query.full_name}`);\n  return attrs.length ? attrs.join(', ') : 'I only know your session context right now.';\n})();\n\nconst baselineTone = (() => {\n  const role = String(query.role || 'user').toLowerCase();\n  const source = String(query.source || 'ntfy').toLowerCase();\n  if (source === 'telegram') return role === 'admin' ? 'concise' : 'warm';\n  if (source === 'ntfy') return 'neutral';\n  return 'neutral';\n})();\n\nconst inferredTone = (() => {\n  const text = questionNorm;\n  const rawText = String(question || '');\n  const charCount = text.length;\n  const wordCount = text ? text.split(/\\s+/).filter(Boolean).length : 0;\n\n  const hasPlease = /\\b(please|pls|kindly|could you|can you)\\b/i.test(rawText);\n  const hasThanks = /\\b(thanks|thank you|thx|ty|appreciate it)\\b/i.test(rawText);\n  const hasGreeting = /\\b(hi|hello|hey|good\\s*(morning|afternoon|evening))\\b/i.test(rawText);\n  const hasWarmEmoji = /[🙂😊😄😁🙏❤️✨👍]/u.test(rawText);\n\n  const hasUrgency = /\\b(urgent|asap|immediately|right now|critical|sev1|outage|down|blocker)\\b/i.test(rawText);\n  const hasFrustration = /\\b(wtf|broken|not working|this sucks|annoying|frustrating|ugh)\\b/i.test(rawText);\n  const hasStrongPunct = /!{2,}|\\?{2,}/.test(rawText);\n  const hasAllCapsBurst = /[A-Z]{4,}/.test(rawText);\n  const isShortDirective = wordCount > 0 && wordCount <= 4;\n\n  const looksFormal = /\\b(please advise|for your reference|kindly review|would you)\\b/i.test(rawText);\n  const longQuestion = wordCount >= 18;\n\n  if (hasPlease || hasThanks || hasGreeting || hasWarmEmoji) return 'warm';\n  if (hasUrgency || hasFrustration || hasStrongPunct || hasAllCapsBurst || isShortDirective) return 'concise';\n  if (looksFormal || longQuestion) return 'neutral';\n  if (charCount <= 8 && wordCount <= 2) return 'concise';\n  return 'neutral';\n})();\n\nconst toneMemoryKey = (() => {\n  const source = String(query.source || 'unknown').toLowerCase();\n  const userId = String(query.user_id ?? '').trim();\n  const uname = String(query.telegram_username || '').trim().toLowerCase();\n  const tenant = String(query.tenant_id || '').trim().toLowerCase();\n  if (userId) return `${source}:uid:${userId}`;\n  if (uname) return `${source}:uname:${uname}`;\n  if (tenant) return `${source}:tenant:${tenant}`;\n  return `${source}:anon`;\n})();\n\nconst toneMemoryStore = (() => {\n  try {\n    if (typeof $getWorkflowStaticData === 'function') {\n      const store = $getWorkflowStaticData('global');\n      if (!store.__servernootsToneMemory || typeof store.__servernootsToneMemory !== 'object') {\n        store.__servernootsToneMemory = {};\n      }\n      return store.__servernootsToneMemory;\n    }\n  } catch (err) {\n  }\n\n  const root = globalThis;\n  if (!root.__servernootsToneMemory || typeof root.__servernootsToneMemory !== 'object') {\n    root.__servernootsToneMemory = {};\n  }\n  return root.__servernootsToneMemory;\n})();\n\nconst priorToneHistory = (() => {\n  const payloadHistory = Array.isArray(query.tone_history)\n    ? query.tone_history.filter((t) => ['warm', 'neutral', 'concise'].includes(String(t).toLowerCase())).map((t) => String(t).toLowerCase()).slice(-3)\n    : [];\n  if (payloadHistory.length) return payloadHistory;\n\n  const entry = toneMemoryStore[toneMemoryKey];\n  if (!entry || !Array.isArray(entry.history)) return [];\n  return entry.history.filter((t) => t === 'warm' || t === 'neutral' || t === 'concise').slice(-3);\n})();\n\nconst preferredToneTarget = (() => {\n  const value = String(query.persona_pref_tone || '').trim().toLowerCase();\n  return ['warm', 'neutral', 'concise'].includes(value) ? value : '';\n})();\n\nconst preferredBrevityTarget = (() => {\n  const value = String(query.persona_pref_brevity || '').trim().toLowerCase();\n  return ['short', 'balanced', 'detailed'].includes(value) ? value : '';\n})();\n\nconst toneProfile = (() => {\n  if (preferredToneTarget) return preferredToneTarget;\n  const votes = { warm: 0, neutral: 0, concise: 0 };\n  for (const tone of priorToneHistory) votes[tone] = (votes[tone] || 0) + 1;\n  votes[String(baselineTone)] = (votes[String(baselineTone)] || 0) + 1;\n  votes[String(inferredTone)] = (votes[String(inferredTone)] || 0) + 2;\n\n  const ordered = ['warm', 'neutral', 'concise'];\n  let bestTone = 'neutral';\n  let bestScore = -1;\n  for (const tone of ordered) {\n    const score = Number(votes[tone] || 0);\n    if (score > bestScore) {\n      bestTone = tone;\n      bestScore = score;\n    }\n  }\n\n  if ((votes[inferredTone] || 0) === bestScore) return inferredTone;\n  if ((votes[baselineTone] || 0) === bestScore) return baselineTone;\n  return bestTone;\n})();\n\n(() => {\n  const updated = [...priorToneHistory, inferredTone].slice(-3);\n  toneMemoryStore[toneMemoryKey] = {\n    history: updated,\n    updated_at: Date.now(),\n  };\n})();\n\nconst tonePick = (variants) => {\n  if (!variants || typeof variants !== 'object') return '';\n  return String(variants[toneProfile] || variants.neutral || variants.warm || variants.concise || '').trim();\n};\n\nconst perceivedSignals = (() => {\n  const raw = String(question || '');\n  const text = String(questionNorm || '');\n\n  const positiveFeedback = /\\b(thanks|thank you|appreciate it|that worked|works now|perfect|great|awesome|nice|solved|makes sense)\\b/i.test(raw);\n  const politeWarm = /\\b(please|kindly|could you|can you)\\b/i.test(raw);\n\n  const correctionAttempt = /\\b(actually|not quite|that's wrong|that is wrong|incorrect|you missed|you forgot|i meant|to clarify|correction|not what i asked|wrong answer|that's not right)\\b/i.test(raw);\n  const additionalInfoAttempt = /\\b(additional info|more context|for context|here is context|use this|new detail|also note|another detail|clarification:|update:)\\b/i.test(raw);\n  const retryCue = /\\b(again|repeat|still wrong|you didn't|you did not|try again|one more time)\\b/i.test(raw);\n  const frustration = /\\b(wtf|broken|not working|this sucks|annoying|frustrating|ugh)\\b/i.test(raw);\n  const recoveryMode = Boolean((correctionAttempt && retryCue) || frustration);\n\n  let score = 0;\n  if (toneProfile === 'warm') score += 0.1;\n  if (positiveFeedback) score += 0.45;\n  if (politeWarm) score += 0.1;\n\n  if (correctionAttempt) score -= 0.7;\n  if (additionalInfoAttempt) score -= 0.45;\n  if (retryCue) score -= 0.6;\n  if (frustration) score -= 0.5;\n\n  const normalized = Math.max(-1, Math.min(1, score));\n  const label = normalized <= -0.2 ? 'negative' : (normalized >= 0.2 ? 'positive' : 'neutral');\n\n  return {\n    score: normalized,\n    label,\n    correction_attempt: correctionAttempt,\n    additional_info_attempt: additionalInfoAttempt,\n    retry_cue: retryCue,\n    frustration_cue: frustration,\n    recovery_mode: recoveryMode,\n  };\n})();\n\nconst brevityTarget = (() => {\n  if (preferredBrevityTarget) return preferredBrevityTarget;\n  const wc = question ? question.split(/\\s+/).filter(Boolean).length : 0;\n  if (toneProfile === 'concise') return 'short';\n  if (wc >= 24) return 'detailed';\n  return 'balanced';\n})();\n\nconst smalltalkConfidenceTier = (() => {\n  if (/\\b(memory|remember|retain chats|what did i ask before)\\b/i.test(questionNorm)) return 'low';\n  return 'high';\n})();\n\nconst personaContract = {\n  persona_contract_version: 'v1',\n  tone_target: toneProfile,\n  brevity_target: brevityTarget,\n  style_must: [\n    'be factual and direct',\n    'adapt wording to tone_target',\n    'state uncertainty when data is missing',\n  ],\n  style_must_not: [\n    'invent sources or citations',\n    'mention private seed context unless asked',\n    'override safety or access policy',\n  ],\n  safety_mode: 'strict',\n};\n\nconst smalltalkLibrary = [\n  {\n    key: 'greeting',\n    patterns: [/^(hi|hello|hey|yo|sup|good\\s*(morning|afternoon|evening))([!. ]*)$/i],\n    build: (ctx) => tonePick({\n      warm: `Hey ${ctx.displayName} — I’m online and ready. You can ask ops, runbook, or general questions any time.`,\n      neutral: `Hello ${ctx.displayName}. I’m online and ready for ops, runbook, or general questions.`,\n      concise: `Ready, ${ctx.displayName}. Ask your question.`,\n    }),\n  },\n  {\n    key: 'thanks',\n    patterns: [/^(thanks|thank you|thx|ty)([!. ]*)$/i],\n    build: (ctx) => tonePick({\n      warm: `You’re welcome, ${ctx.displayName}.`,\n      neutral: `You’re welcome, ${ctx.displayName}.`,\n      concise: `Anytime, ${ctx.displayName}.`,\n    }),\n  },\n  {\n    key: 'farewell',\n    patterns: [/^(bye|goodbye|see you|talk later|gn|good night)([!. ]*)$/i],\n    build: (ctx) => tonePick({\n      warm: `Anytime, ${ctx.displayName}. I’ll be here when you need me.`,\n      neutral: `Session acknowledged. Reach out when needed, ${ctx.displayName}.`,\n      concise: `Understood. I’m here when needed.`,\n    }),\n  },\n  {\n    key: 'checkin',\n    patterns: [/^(how are you|hows it going|how is it going)([?.! ]*)$/i],\n    build: (ctx) => tonePick({\n      warm: `Running smoothly here, ${ctx.displayName}. What should we work on next?`,\n      neutral: `I’m operating normally, ${ctx.displayName}. What do you want to handle next?`,\n      concise: `All good. Next task?`,\n    }),\n  },\n  {\n    key: 'capabilities',\n    patterns: [/(who are you|what can you do|help me|how can you help)/i],\n    build: () => tonePick({\n      warm: 'I can help with internal runbook/docs questions, web-first general queries, weather, and ops-safe workflows. For internal knowledge, mention runbook/docs/day/phase terms.',\n      neutral: 'Capabilities: internal runbook/docs Q&A, web-first general queries, weather, and ops-safe workflows. Use runbook/docs/day/phase terms for internal retrieval.',\n      concise: 'I handle runbook/docs, web-first general Q&A, weather, and ops-safe workflows.',\n    }),\n  },\n  {\n    key: 'examples',\n    patterns: [/(example prompts|give me examples|what should i ask|sample questions|what can i ask)/i],\n    build: () => tonePick({\n      warm: 'Try: “Summarize Day 5 checklist risks”, “What changed in today’s runbook?”, “What is the weather in San Diego?”, or “How do I verify bridge health?”',\n      neutral: 'Example prompts: “Summarize Day 5 checklist risks”; “What changed in today’s runbook?”; “What is the weather in San Diego?”; “How do I verify bridge health?”',\n      concise: 'Examples: “Summarize Day 5 checklist risks”; “What changed in today’s runbook?”; “Weather in San Diego?”; “Verify bridge health steps.”',\n    }),\n  },\n  {\n    key: 'user_profile',\n    patterns: [/^(what do you know about me|who am i|remember about me)([?.! ]*)$/i],\n    build: (ctx) => tonePick({\n      warm: `Known context: ${ctx.userSummary}.`,\n      neutral: `Known context: ${ctx.userSummary}.`,\n      concise: `Context: ${ctx.userSummary}.`,\n    }),\n  },\n  {\n    key: 'memory_limits',\n    patterns: [/(do you remember|what did i ask before|memory|do you retain chats)/i],\n    build: () => tonePick({\n      warm: 'I use current message context plus routed system context. For durable facts, save them to your runbook/docs path so retrieval can use them reliably.',\n      neutral: 'I use current message context plus routed system context. Store durable facts in runbook/docs so retrieval can reference them consistently.',\n      concise: 'I use current context. Save durable facts to runbook/docs for reliable retrieval.',\n    }),\n  },\n  {\n    key: 'status',\n    patterns: [/(are you there|are you online|status|still there)/i],\n    build: () => tonePick({\n      warm: 'I’m online and responding normally.',\n      neutral: 'System is online and responding normally.',\n      concise: 'Online and responsive.',\n    }),\n  },\n  {\n    key: 'clarify_request',\n    patterns: [/(not sure|i don.?t know|confused|can you clarify|what do you mean)/i],\n    build: () => tonePick({\n      warm: 'Absolutely. Share your goal in one sentence and I’ll propose the simplest next step.',\n      neutral: 'Share your goal in one sentence and I will propose the simplest next step.',\n      concise: 'State the goal in one sentence; I’ll give the next step.',\n    }),\n  },\n  {\n    key: 'retry_request',\n    patterns: [/(try again|again please|repeat that|say that again|one more time)/i],\n    build: () => tonePick({\n      warm: 'Sure — resend your question (or rephrase it) and I’ll answer with a tighter, step-by-step response.',\n      neutral: 'Please resend or rephrase your question. I will return a tighter, step-by-step response.',\n      concise: 'Resend/rephrase the question; I’ll answer more directly.',\n    }),\n  },\n  {\n    key: 'handoff_human',\n    patterns: [/(human help|talk to a human|escalate|need an admin|contact admin)/i],\n    build: () => tonePick({\n      warm: 'I can prepare a concise handoff summary. Tell me the issue, impact, and urgency, and I’ll format it for an admin.',\n      neutral: 'I can format a handoff summary. Provide issue, impact, and urgency for admin escalation.',\n      concise: 'Provide issue, impact, urgency. I’ll format admin handoff.',\n    }),\n  },\n  {\n    key: 'safety_refusal',\n    patterns: [/(hack|exploit|bypass|steal password|malware|ddos|ransomware)/i],\n    build: () => tonePick({\n      warm: 'I can’t help with harmful actions. I can help with defensive checks, hardening, and incident response instead.',\n      neutral: 'I can’t assist with harmful actions. I can assist with defensive security checks and incident response.',\n      concise: 'I can’t help with harm. I can help with defense and response.',\n    }),\n  },\n];\n\nfor (const rule of smalltalkLibrary) {\n  if (rule.patterns.some((pattern) => pattern.test(questionNorm))) {\n    return {\n      mode: 'smalltalk',\n      reply: rule.build({ displayName, userSummary, toneProfile }),\n      sources_csv: '',\n      top_score: topScore,\n      source: query.source,\n      question,\n      needs_web: false,\n      needs_weather: false,\n      decision: `smalltalk:${rule.key}`,\n      tone_profile: toneProfile,\n      tone_inferred: inferredTone,\n      tone_baseline: baselineTone,\n      tone_memory_count: priorToneHistory.length,\n      perceived_score: perceivedSignals.score,\n      perceived_label: perceivedSignals.label,\n      correction_attempt: perceivedSignals.correction_attempt,\n      additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue,\n      persona_contract_version: personaContract.persona_contract_version,\n      tone_target: personaContract.tone_target,\n      brevity_target: personaContract.brevity_target,\n      style_must: personaContract.style_must,\n      style_must_not: personaContract.style_must_not,\n      safety_mode: personaContract.safety_mode,\n      confidence_tier: smalltalkConfidenceTier,\n      role: query.role,\n      tenant_id: query.tenant_id,\n      collection_name: query.collection_name,\n      full_name: query.full_name,\n      telegram_username: query.telegram_username,\n      persona_pref_tone: query.persona_pref_tone,\n      persona_pref_brevity: query.persona_pref_brevity,\n    };\n  }\n}\n\nconst wantsWeather = /\\b(weather|forecast|temperature|rain|humidity|wind)\\b/i.test(question);\nconst hasProfileSeed = String(query.user_profile_seed || '').trim().length > 0;\nconst explicitRagIntent = /\\b(rag|knowledge\\s*base|kb|runbook|docs?|document(?:ation)?|internal\\s*(?:notes|docs|knowledge)|from\\s+(?:the\\s+)?(?:runbook|docs|knowledge\\s*base)|servernoots|day\\s*[1-7]|phase\\s*1|checklist|profile\\s*name|where\\s+did\\s+i\\s+come\\s+from|where\\s+am\\s+i\\s+from|my\\s+discord|linked\\s+discord)\\b/i.test(question);\nconst asksCurrentWeb = /\\b(news|latest|today|current|price|weather|stock|release date|breaking|search\\s+web|web\\s+search|look\\s+up)\\b/i.test(question);\n\nif (wantsWeather) {\n  const prompt = `Answer the weather question using live weather data when available. If live data is unavailable, say that clearly and provide general guidance.\\n\\nQuestion: ${question}`;\n  return { mode: 'general', prompt, sources_csv: sourceNames.join(', ') || '', top_score: topScore, source: query.source, question, needs_web: true, needs_weather: true, decision: 'weather-web-first', role: query.role, tenant_id: query.tenant_id, collection_name: query.collection_name, full_name: query.full_name, telegram_username: query.telegram_username, perceived_score: perceivedSignals.score, perceived_label: perceivedSignals.label, correction_attempt: perceivedSignals.correction_attempt, additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue, persona_contract_version: personaContract.persona_contract_version, tone_target: personaContract.tone_target, brevity_target: personaContract.brevity_target, style_must: personaContract.style_must, style_must_not: personaContract.style_must_not, safety_mode: personaContract.safety_mode, confidence_tier: 'medium' };\n}\n\nconst ragConfident = hits.length > 0 && topScore >= ragMinScore && contexts.length > 0;\nconst confidenceTier = (() => {\n  if (ragConfident) return 'high';\n  if (explicitRagIntent && !ragConfident) return 'low';\n  if (asksCurrentWeb || wantsWeather) return 'medium';\n  return 'medium';\n})();\n\nif (explicitRagIntent && ragConfident) {\n  const prompt = `Answer the question using only the provided context. If context is insufficient, say so briefly.\\n\\nQuestion: ${question}\\n\\nContext:\\n${contexts.join('\\n\\n')}`;\n  return { mode: 'rag', prompt, sources_csv: sourceNames.join(', ') || 'unknown_source', top_score: topScore, source: query.source, question, needs_web: false, needs_weather: false, decision: 'explicit-rag', role: query.role, tenant_id: query.tenant_id, collection_name: query.collection_name, full_name: query.full_name, telegram_username: query.telegram_username, perceived_score: perceivedSignals.score, perceived_label: perceivedSignals.label, correction_attempt: perceivedSignals.correction_attempt, additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue, persona_contract_version: personaContract.persona_contract_version, tone_target: personaContract.tone_target, brevity_target: personaContract.brevity_target, style_must: personaContract.style_must, style_must_not: personaContract.style_must_not, safety_mode: personaContract.safety_mode, confidence_tier: confidenceTier };\n}\n\nif (explicitRagIntent && !ragConfident && hasProfileSeed) {\n  const prompt = `Answer the question using the private user seed context that is attached to this request. If a requested field is missing, say so briefly and do not guess.\\n\\nQuestion: ${question}`;\n  return { mode: 'general', prompt, sources_csv: sourceNames.join(', ') || 'private_profile_seed', top_score: topScore, source: query.source, question, needs_web: false, needs_weather: false, decision: 'profile-seed-fallback-rag', role: query.role, tenant_id: query.tenant_id, collection_name: query.collection_name, full_name: query.full_name, telegram_username: query.telegram_username, perceived_score: perceivedSignals.score, perceived_label: perceivedSignals.label, correction_attempt: perceivedSignals.correction_attempt, additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue, persona_contract_version: personaContract.persona_contract_version, tone_target: personaContract.tone_target, brevity_target: personaContract.brevity_target, style_must: personaContract.style_must, style_must_not: personaContract.style_must_not, safety_mode: personaContract.safety_mode, confidence_tier: confidenceTier };\n}\n\nif (explicitRagIntent && !ragConfident) {\n  const prompt = `The user asked about internal/docs context, but strong RAG matches were not found. Say this clearly, then provide the best practical answer you can using web snippets when available.\\n\\nQuestion: ${question}`;\n  return { mode: 'general', prompt, sources_csv: sourceNames.join(', ') || '', top_score: topScore, source: query.source, question, needs_web: true, needs_weather: false, decision: 'rag-request-low-confidence-web-fallback', role: query.role, tenant_id: query.tenant_id, collection_name: query.collection_name, full_name: query.full_name, telegram_username: query.telegram_username, perceived_score: perceivedSignals.score, perceived_label: perceivedSignals.label, correction_attempt: perceivedSignals.correction_attempt, additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue, persona_contract_version: personaContract.persona_contract_version, tone_target: personaContract.tone_target, brevity_target: personaContract.brevity_target, style_must: personaContract.style_must, style_must_not: personaContract.style_must_not, safety_mode: personaContract.safety_mode, confidence_tier: confidenceTier };\n}\n\nconst prompt = asksCurrentWeb\n  ? `Answer the user question with current, practical guidance using web snippets when available. If web snippets are missing or stale, clearly say so.\\n\\nQuestion: ${question}`\n  : `Answer the user question helpfully and concisely using web snippets first. If web snippets are missing, answer from general knowledge and say that briefly.\\n\\nQuestion: ${question}`;\n\nreturn { mode: 'general', prompt, sources_csv: sourceNames.join(', ') || '', top_score: topScore, source: query.source, question, needs_web: true, needs_weather: false, decision: 'default-web-first', role: query.role, tenant_id: query.tenant_id, collection_name: query.collection_name, full_name: query.full_name, telegram_username: query.telegram_username, perceived_score: perceivedSignals.score, perceived_label: perceivedSignals.label, correction_attempt: perceivedSignals.correction_attempt, additional_info_attempt: perceivedSignals.additional_info_attempt, recovery_mode: perceivedSignals.recovery_mode, retry_cue: perceivedSignals.retry_cue, frustration_cue: perceivedSignals.frustration_cue, persona_contract_version: personaContract.persona_contract_version, tone_target: personaContract.tone_target, brevity_target: personaContract.brevity_target, style_must: personaContract.style_must, style_must_not: personaContract.style_must_not, safety_mode: personaContract.safety_mode, confidence_tier: confidenceTier };"
+        },
+        "id": "prepare_query",
+        "name": "Prepare Query",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1420,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "has_matches_true",
+                "leftValue": "={{$json.mode}}",
+                "rightValue": "rag",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_has_matches",
+        "name": "If Has Matches",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1660,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "is_smalltalk_mode",
+                "leftValue": "={{$json.mode}}",
+                "rightValue": "smalltalk",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_smalltalk_mode",
+        "name": "If Smalltalk Mode",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1660,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const prep = $item(0).$node['Prepare Query'].json;\nconst answer = String(prep.reply ?? '').trim() || '✅ Received.';\nconst debugEnabled = true;\nconst score = Number(prep.top_score ?? 0);\nconst scoreTxt = Number.isFinite(score) ? score.toFixed(3) : 'n/a';\nconst tone = String(prep.tone_profile || 'n/a');\nconst inferred = String(prep.tone_inferred || 'n/a');\nconst memoryCount = Number(prep.tone_memory_count ?? 0);\nconst uxScore = Number(prep.perceived_score ?? 0);\nconst uxScoreTxt = Number.isFinite(uxScore) ? uxScore.toFixed(2) : '0.00';\nconst uxLabel = String(prep.perceived_label || 'neutral');\nconst contractVersion = String(prep.persona_contract_version || 'v1');\nconst toneTarget = String(prep.tone_target || tone || 'neutral');\nconst brevityTarget = String(prep.brevity_target || 'balanced');\nconst safetyMode = String(prep.safety_mode || 'strict');\nconst confidenceTier = String(prep.confidence_tier || 'medium');\nconst recoveryMode = Boolean(prep.recovery_mode);\nconst styleGateEnabled = true;\n\nconst routeBudgetClass = 'smalltalk';\nconst gateLimitsByRoute = {\n  smalltalk: { short: 220, balanced: 520, detailed: 900 },\n  ops: { short: 260, balanced: 560, detailed: 940 },\n  rag: { short: 320, balanced: 920, detailed: 1600 },\n  general: { short: 280, balanced: 760, detailed: 1300 },\n};\nconst gateLimits = gateLimitsByRoute[routeBudgetClass] || gateLimitsByRoute.general;\nconst maxChars = gateLimits[brevityTarget] || gateLimits.balanced;\nconst overrunReason = `length_exceeded_${routeBudgetClass}`;\n\nconst runStyleGate = (text) => {\n  const value = String(text || '').trim();\n  const reasons = [];\n  if (/\b(as an ai language model|i cannot browse the web)\b/i.test(value)) reasons.push('disallowed_phrase');\n  if (value.length > maxChars) reasons.push(overrunReason);\n  if (confidenceTier === 'low' && !/\\b(based on available context|may be missing details|might be missing details|not enough information|insufficient information|strong rag matches were not found)\\b/i.test(value)) reasons.push('uncertainty_missing');\n  if (Boolean(prep.correction_attempt) && !/\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\b/i.test(value)) {\n    reasons.push('correction_ack_missing');\n  }\n  return { pass: reasons.length === 0, reason: reasons[0] || 'ok' };\n};\n\nconst rewriteStyle = (text, reason) => {\n  const value = String(text || '').trim();\n  if (!value) return '✅ Received.';\n  if (reason === 'correction_ack_missing') return `Thanks for the correction. ${value}`;\n  if (String(reason || '').startsWith('length_exceeded')) return value.slice(0, Math.max(80, maxChars - 3)).trimEnd() + '...';\n  if (reason === 'disallowed_phrase') return value.replace(/\b(as an ai language model|i cannot browse the web)\b/ig, 'I can help with available local and routed context');\n  return value;\n};\n\nlet styled = answer;\nif (recoveryMode && !/\\bi hear your frustration\\b/i.test(styled)) {\n  const restated = String(prep.question || '').trim().slice(0, 160);\n  styled = `I hear your frustration. You want: ${restated || 'a corrected, direct answer'}. Next step: I will give one direct answer and one concrete follow-up action.\\n\\n${styled}`;\n}\nif (Boolean(prep.correction_attempt) && !/\\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\\b/i.test(styled)) {\n  styled = `Thanks for the correction. ${styled}`;\n}\n\nif (confidenceTier === 'low' && !/\\b(based on available context|may be missing details)\\b/i.test(styled)) {\n  styled = `Based on available context, I may be missing details. ${styled}`;\n}\n\nlet gate = styleGateEnabled ? runStyleGate(styled) : { pass: true, reason: 'disabled' };\nif (styleGateEnabled && gate.pass && /__stylegate_disallowed_probe__/i.test(String(prep.question || ''))) {\n  gate = { pass: false, reason: 'disallowed_phrase' };\n}\nif (styleGateEnabled && !gate.pass) {\n  const initialReason = gate.reason;\n  styled = rewriteStyle(styled, initialReason);\n  if (initialReason === 'correction_ack_missing') {\n    gate = { pass: true, reason: 'rewrite_correction_ack_missing' };\n  } else {\n    const retry = runStyleGate(styled);\n    gate = { pass: retry.pass, reason: retry.pass ? `rewrite_${initialReason}` : `fail_${retry.reason}` };\n  }\n}\n\n// TEST-ONLY: deterministic style-gate terminal fail probe for regression coverage.\nif (/__stylegate_force_fail__/i.test(String(prep.question || ''))) {\n  gate = { pass: false, reason: 'fail_forced_probe' };\n}\nconst dbg = debugEnabled ? `\\n\\n[route:${String(prep.decision || 'smalltalk')} tone:${tone} inferred:${inferred} mem:${memoryCount} score:${scoreTxt} ux:${uxLabel} ux_score:${uxScoreTxt} pc:${contractVersion} tone_target:${toneTarget} brevity:${brevityTarget} rb:${maxChars} safety:${safetyMode} conf:${confidenceTier} rm:${recoveryMode ? 'on' : 'off'} sg:${gate.pass ? 'pass' : 'fail'} sgr:${gate.reason}]` : '';\nreturn {\n  reply: `${styled}${dbg}`,\n  source: prep.source ?? 'ntfy',\n  role: prep.role,\n  tenant_id: prep.tenant_id,\n  collection_name: prep.collection_name,\n  persona_contract_version: contractVersion,\n  tone_target: toneTarget,\n  brevity_target: brevityTarget,\n  style_must: Array.isArray(prep.style_must) ? prep.style_must : [],\n  style_must_not: Array.isArray(prep.style_must_not) ? prep.style_must_not : [],\n  safety_mode: safetyMode,\n  confidence_tier: confidenceTier,\n  recovery_mode: recoveryMode,\n  style_gate_pass: gate.pass,\n  style_gate_reason: gate.reason,\n};"
+        },
+        "id": "format_smalltalk_reply",
+        "name": "Format Smalltalk Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1900,
+          620
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:11435/api/generate",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ model: 'qwen2.5-coder:7b', prompt: $json.prompt, stream: false, options: { num_predict: 180, temperature: 0.2 } }) }}",
+          "options": {}
+        },
+        "id": "call_ollama_answer",
+        "name": "Call Ollama Answer",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1900,
+          280
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const prep = $item(0).$node['Prepare Query'].json;\nconst normalized = $item(0).$node['Normalize Query'].json;\nconst contractVersion = String(prep.persona_contract_version || 'v1');\nconst toneTarget = String(prep.tone_target || prep.tone_profile || 'neutral');\nconst brevityTarget = String(prep.brevity_target || 'balanced');\nconst safetyMode = String(prep.safety_mode || 'strict');\nconst confidenceTier = String(prep.confidence_tier || 'medium');\nconst recoveryMode = Boolean(prep.recovery_mode);\nif (normalized.tenant_scope_violation) {\n  return {\n    reply: '⛔ Access denied: your account can only access its own tenant memory.\\n\\n[route:scope-denied score:0.000 sg:pass sgr:scope_denied]',\n    source: prep.source ?? normalized.source ?? 'ntfy',\n    role: prep.role ?? normalized.role,\n    tenant_id: prep.tenant_id ?? normalized.tenant_id,\n    collection_name: prep.collection_name ?? normalized.collection_name,\n    persona_contract_version: contractVersion,\n    tone_target: toneTarget,\n    brevity_target: brevityTarget,\n    style_must: Array.isArray(prep.style_must) ? prep.style_must : [],\n    style_must_not: Array.isArray(prep.style_must_not) ? prep.style_must_not : [],\n    safety_mode: safetyMode,\n  confidence_tier: confidenceTier,\n  recovery_mode: recoveryMode,\n    style_gate_pass: true,\n    style_gate_reason: 'scope_denied',\n  };\n}\nconst response = String($json.response ?? '').trim();\nconst answer = response || 'No trusted source found';\nconst baseReply = `${answer}\\n\\nSources: ${prep.sources_csv}`;\nconst debugEnabled = true;\nconst score = Number(prep.top_score ?? 0);\nconst scoreTxt = Number.isFinite(score) ? score.toFixed(3) : 'n/a';\nconst uxScore = Number(prep.perceived_score ?? 0);\nconst uxScoreTxt = Number.isFinite(uxScore) ? uxScore.toFixed(2) : '0.00';\nconst uxLabel = String(prep.perceived_label || 'neutral');\nconst styleGateEnabled = true;\nconst routeBudgetClass = 'rag';\nconst gateLimitsByRoute = {\n  smalltalk: { short: 220, balanced: 520, detailed: 900 },\n  ops: { short: 260, balanced: 560, detailed: 940 },\n  rag: { short: 320, balanced: 920, detailed: 1600 },\n  general: { short: 280, balanced: 760, detailed: 1300 },\n};\nconst gateLimits = gateLimitsByRoute[routeBudgetClass] || gateLimitsByRoute.general;\nconst maxChars = gateLimits[brevityTarget] || gateLimits.balanced;\nconst overrunReason = `length_exceeded_${routeBudgetClass}`;\nconst runStyleGate = (text) => {\n  const value = String(text || '').trim();\n  const reasons = [];\n  if (/\b(as an ai language model|i cannot browse the web)\b/i.test(value)) reasons.push('disallowed_phrase');\n  if (value.length > maxChars) reasons.push(overrunReason);\n  if (confidenceTier === 'low' && !/\\b(based on available context|may be missing details|might be missing details|not enough information|insufficient information|strong rag matches were not found)\\b/i.test(value)) reasons.push('uncertainty_missing');\n  if (Boolean(prep.correction_attempt) && !/\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\b/i.test(value)) {\n    reasons.push('correction_ack_missing');\n  }\n  return { pass: reasons.length === 0, reason: reasons[0] || 'ok' };\n};\nconst rewriteStyle = (text, reason) => {\n  const value = String(text || '').trim();\n  if (!value) return 'No trusted source found';\n  if (reason === 'correction_ack_missing') return `Thanks for the correction. ${value}`;\n  if (String(reason || '').startsWith('length_exceeded')) return value.slice(0, Math.max(100, maxChars - 3)).trimEnd() + '...';\n  if (reason === 'disallowed_phrase') return value.replace(/\b(as an ai language model|i cannot browse the web)\b/ig, 'I can help with available local and routed context');\n  return value;\n};\nlet styled = baseReply;\nif (recoveryMode && !/\\bi hear your frustration\\b/i.test(styled)) {\n  const restated = String(prep.question || '').trim().slice(0, 160);\n  styled = `I hear your frustration. You want: ${restated || 'a corrected, direct answer'}. Next step: I will give one direct answer and one concrete follow-up action.\\n\\n${styled}`;\n}\nif (Boolean(prep.correction_attempt) && !/\\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\\b/i.test(styled)) {\n  styled = `Thanks for the correction. ${styled}`;\n}\n\nif (confidenceTier === 'low' && !/\\b(based on available context|may be missing details)\\b/i.test(styled)) {\n  styled = `Based on available context, I may be missing details. ${styled}`;\n}\n\nlet gate = styleGateEnabled ? runStyleGate(styled) : { pass: true, reason: 'disabled' };\nif (styleGateEnabled && gate.pass && /__stylegate_disallowed_probe__/i.test(String(prep.question || ''))) {\n  gate = { pass: false, reason: 'disallowed_phrase' };\n}\nif (styleGateEnabled && !gate.pass) {\n  const initialReason = gate.reason;\n  styled = rewriteStyle(styled, initialReason);\n  if (initialReason === 'correction_ack_missing') {\n    gate = { pass: true, reason: 'rewrite_correction_ack_missing' };\n  } else {\n    const retry = runStyleGate(styled);\n    gate = { pass: retry.pass, reason: retry.pass ? `rewrite_${initialReason}` : `fail_${retry.reason}` };\n  }\n}\n// TEST-ONLY: deterministic style-gate terminal fail probe for regression coverage.\nif (/__stylegate_force_fail__/i.test(String(prep.question || ''))) {\n  gate = { pass: false, reason: 'fail_forced_probe' };\n}\nconst dbg = debugEnabled ? `\\n\\n[route:${String(prep.decision || 'unknown')} score:${scoreTxt} ux:${uxLabel} ux_score:${uxScoreTxt} pc:${contractVersion} tone_target:${toneTarget} brevity:${brevityTarget} rb:${maxChars} safety:${safetyMode} conf:${confidenceTier} rm:${recoveryMode ? 'on' : 'off'} sg:${gate.pass ? 'pass' : 'fail'} sgr:${gate.reason}]` : '';\nreturn { reply: `${styled}${dbg}`, source: prep.source ?? 'ntfy', role: prep.role, tenant_id: prep.tenant_id, collection_name: prep.collection_name, persona_contract_version: contractVersion, tone_target: toneTarget, brevity_target: brevityTarget, style_must: Array.isArray(prep.style_must) ? prep.style_must : [], style_must_not: Array.isArray(prep.style_must_not) ? prep.style_must_not : [], safety_mode: safetyMode, confidence_tier: confidenceTier, recovery_mode: recoveryMode, style_gate_pass: gate.pass, style_gate_reason: gate.reason };"
+        },
+        "id": "format_rag_reply",
+        "name": "Format RAG Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2140,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const prep = $item(0).$node['Prepare Query'].json;\nconst query = $item(0).$node['Resolve Audio Query'].json;\nconst memoryEnabled = Boolean(query.memory_enabled_effective ?? query.memory_enabled ?? false);\nconst memorySummary = String(query.memory_summary_effective ?? query.memory_summary ?? '').trim().slice(0, 1200);\nconst profileSeed = String(query.user_profile_seed || '').trim().slice(0, 3200);\nconst profileImage = String(query.user_profile_image_url || '').trim().slice(0, 1000);\nconst blocks = [];\nif (memoryEnabled && memorySummary) {\n  blocks.push(`User memory (persisted user preferences/context; use only when relevant and do not mention unless asked):\\n${memorySummary}`);\n}\nif (profileSeed) {\n  blocks.push(`Private user seed (initial personal context; do not cite this as a database/source unless the user explicitly asks):\\n${profileSeed}`);\n}\nif (profileImage) {\n  blocks.push(`Profile image reference (for personalization and voice-channel interactions): ${profileImage}`);\n}\nconst memoryBlock = blocks.length ? `\\n\\n${blocks.join('\\n\\n')}` : '';\nconst rawMinSpeaker = query.memory_min_speaker_confidence;\nconst minSpeakerConfidence = (rawMinSpeaker === null || rawMinSpeaker === undefined || rawMinSpeaker === '') ? null : Number(rawMinSpeaker);\nreturn { prompt: `${String(prep.prompt || '')}${memoryBlock}`, mode: prep.mode, top_score: prep.top_score, source: prep.source ?? 'ntfy', question: prep.question ?? '', needs_web: Boolean(prep.needs_web), needs_weather: Boolean(prep.needs_weather), decision: prep.decision ?? 'unknown', web_provider: 'none', snippet_count: 0, role: prep.role, tenant_id: prep.tenant_id, collection_name: prep.collection_name, perceived_score: prep.perceived_score, perceived_label: prep.perceived_label, correction_attempt: prep.correction_attempt, additional_info_attempt: prep.additional_info_attempt, memory_gate_blocked: Boolean(query.memory_gate_blocked ?? false), memory_write_allowed: typeof query.memory_write_allowed === 'boolean' ? query.memory_write_allowed : null, memory_min_speaker_confidence: Number.isFinite(minSpeakerConfidence) ? minSpeakerConfidence : null, speaker_confidence: query.speaker_confidence ?? null, voice_memory_opt_in: typeof query.voice_memory_opt_in === 'boolean' ? query.voice_memory_opt_in : null, memory_write_mode: String(query.memory_write_mode ?? ''), raw_audio_persist: typeof query.raw_audio_persist === 'boolean' ? query.raw_audio_persist : null, persona_contract_version: String(prep.persona_contract_version || 'v1'), tone_target: String(prep.tone_target || prep.tone_profile || 'neutral'), brevity_target: String(prep.brevity_target || 'balanced'), style_must: Array.isArray(prep.style_must) ? prep.style_must : [], style_must_not: Array.isArray(prep.style_must_not) ? prep.style_must_not : [], safety_mode: String(prep.safety_mode || 'strict') };"
+        },
+        "id": "format_no_match",
+        "name": "Build General Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1900,
+          460
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const query = $item(0).$node['Resolve Audio Query'].json;\nconst memoryEnabled = Boolean(query.memory_enabled_effective ?? query.memory_enabled ?? false);\nconst memorySummary = String(query.memory_summary_effective ?? query.memory_summary ?? '').trim().slice(0, 1200);\nconst profileSeed = String(query.user_profile_seed || '').trim().slice(0, 3200);\nconst profileImage = String(query.user_profile_image_url || '').trim().slice(0, 1000);\nconst prompt = String($json.prompt || '');\nconst blocks = [];\nif (memoryEnabled && memorySummary && !prompt.includes('User memory (persisted user preferences/context;')) {\n  blocks.push(`User memory (persisted user preferences/context; use only when relevant and do not mention unless asked):\\n${memorySummary}`);\n}\nif (profileSeed && !prompt.includes('Private user seed (initial personal context;')) {\n  blocks.push(`Private user seed (initial personal context; do not cite this as a database/source unless the user explicitly asks):\\n${profileSeed}`);\n}\nif (profileImage && !prompt.includes('Profile image reference (for personalization and voice-channel interactions):')) {\n  blocks.push(`Profile image reference (for personalization and voice-channel interactions): ${profileImage}`);\n}\nif (!blocks.length) {\n  return { ...$json, prompt };\n}\nreturn { ...$json, prompt: `${prompt}\\n\\n${blocks.join('\\n\\n')}` };"
+        },
+        "id": "augment_rag_prompt_memory",
+        "name": "Augment RAG Prompt Memory",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1780,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "needs_weather_true",
+                "leftValue": "={{$json.needs_weather ? 'yes' : 'no'}}",
+                "rightValue": "yes",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_needs_weather",
+        "name": "If Needs Weather",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2140,
+          500
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ (() => { var q = String($json.question || ''); var m = q.match(/\\bin\\s+([a-zA-Z\\s]+?)(?:\\?|$)/i); var loc = (m?.[1] || 'San Diego').trim(); return `https://wttr.in/${encodeURIComponent(loc)}?format=j1`; })() }}",
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "weather_fetch",
+        "name": "Fetch Weather",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2380,
+          440
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const base = $item(0).$node['Build General Prompt'].json;\nconst current = Array.isArray($json.current_condition) ? $json.current_condition[0] : null;\nconst area = Array.isArray($json.nearest_area) ? $json.nearest_area[0] : null;\nconst day = Array.isArray($json.weather) ? $json.weather[0] : null;\nconst location = String(area?.areaName?.[0]?.value ?? 'requested location');\nconst tempC = String(current?.temp_C ?? 'n/a');\nconst tempF = String(current?.temp_F ?? 'n/a');\nconst desc = String(current?.weatherDesc?.[0]?.value ?? 'n/a');\nconst humidity = String(current?.humidity ?? 'n/a');\nconst wind = `${String(current?.windspeedMiles ?? 'n/a')} mph`;\nconst maxC = String(day?.maxtempC ?? 'n/a');\nconst minC = String(day?.mintempC ?? 'n/a');\nconst weatherBlock = `\\n\\nLive weather data:\\nLocation: ${location}\\nNow: ${tempC}°C (${tempF}°F), ${desc}\\nHumidity: ${humidity}%\\nWind: ${wind}\\nToday high/low: ${maxC}°C / ${minC}°C`;\nreturn { ...base, prompt: `${base.prompt}${weatherBlock}` };"
+        },
+        "id": "build_weather_prompt",
+        "name": "Build Weather Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2620,
+          440
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "needs_web_true",
+                "leftValue": "={{$json.needs_web ? 'yes' : 'no'}}",
+                "rightValue": "yes",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              },
+              {
+                "id": "web_enabled",
+                "leftValue": "={{String($env.WEB_SEARCH_ENABLED || 'true').toLowerCase()}}",
+                "rightValue": "true",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_needs_web",
+        "name": "If Needs Web",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2380,
+          620
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{$env.WEB_SEARCH_URL || 'https://api.duckduckgo.com/'}}",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "q",
+                "value": "={{$json.question}}"
+              },
+              {
+                "name": "format",
+                "value": "json"
+              },
+              {
+                "name": "no_html",
+                "value": "1"
+              },
+              {
+                "name": "skip_disambig",
+                "value": "1"
+              },
+              {
+                "name": "no_redirect",
+                "value": "1"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "id": "web_search",
+        "name": "Web Search",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2620,
+          620
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const base = $item(0).$node['Build General Prompt'].json;\nconst snippets = [];\nlet provider = 'none';\n\nconst abstractText = String($json.AbstractText ?? '').trim();\nconst heading = String($json.Heading ?? '').trim();\nconst relatedRaw = Array.isArray($json.RelatedTopics) ? $json.RelatedTopics : [];\nconst related = relatedRaw.slice(0, 4).map((item) => String(item?.Text ?? '').trim()).filter(Boolean);\nif (heading || abstractText) snippets.push(`${heading}${heading && abstractText ? ': ' : ''}${abstractText}`.trim());\nfor (const line of related) snippets.push(line);\nif (snippets.length) provider = 'duckduckgo';\n\nif (!snippets.length) {\n  try {\n    const fallbackUrl = String($env.WEB_FALLBACK_URL || 'https://en.wikipedia.org/w/api.php');\n    const url = new URL(fallbackUrl);\n    url.searchParams.set('action', 'query');\n    url.searchParams.set('list', 'search');\n    url.searchParams.set('srsearch', String(base.question || ''));\n    url.searchParams.set('format', 'json');\n    url.searchParams.set('utf8', '1');\n    url.searchParams.set('srlimit', '3');\n    const resp = await fetch(url.toString(), { method: 'GET' });\n    if (resp.ok) {\n      const data = await resp.json();\n      const rows = Array.isArray(data?.query?.search) ? data.query.search : [];\n      for (const item of rows.slice(0, 3)) {\n        const title = String(item?.title ?? '').trim();\n        const snip = String(item?.snippet ?? '').replace(/<[^>]+>/g, '').trim();\n        const line = `${title}${title && snip ? ': ' : ''}${snip}`.trim();\n        if (line) snippets.push(line);\n      }\n      if (snippets.length) provider = 'wikipedia';\n    }\n  } catch (err) {\n  }\n}\n\nconst webBlock = snippets.length\n  ? `\\n\\nWeb snippets (${provider}, may be partial):\\n- ${snippets.join('\\n- ')}`\n  : '\\n\\nWeb snippets: none';\n\nreturn {\n  ...base,\n  prompt: `${base.prompt}${webBlock}`,\n  web_provider: provider,\n  snippet_count: snippets.length,\n};"
+        },
+        "id": "build_web_general_prompt",
+        "name": "Build Web General Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2860,
+          620
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:11435/api/generate",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ model: 'qwen3-coder:30b', prompt: $json.prompt, stream: false, options: { num_predict: 180, temperature: 0.3 } }) }}",
+          "options": {}
+        },
+        "id": "call_ollama_general",
+        "name": "Call Ollama General",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3100,
+          560
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const fromWeb = $item(0).$node['Build Web General Prompt']?.json;\nconst fromBase = $item(0).$node['Build General Prompt'].json;\nconst base = fromWeb && typeof fromWeb === 'object' ? fromWeb : fromBase;\nconst normalized = $item(0).$node['Normalize Query'].json;\nconst contractVersion = String(base.persona_contract_version || 'v1');\nconst toneTarget = String(base.tone_target || 'neutral');\nconst brevityTarget = String(base.brevity_target || 'balanced');\nconst safetyMode = String(base.safety_mode || 'strict');\nconst confidenceTier = String(base.confidence_tier || 'medium');\nconst recoveryMode = Boolean(base.recovery_mode);\nif (normalized.tenant_scope_violation) {\n  return {\n    reply: '⛔ Access denied: your account can only access its own tenant memory.\\n\\n[route:scope-denied score:0.000 web:none snippets:0 sg:pass sgr:scope_denied]',\n    source: String(base.source ?? normalized.source ?? 'ntfy'),\n    role: base.role ?? normalized.role,\n    tenant_id: base.tenant_id ?? normalized.tenant_id,\n    collection_name: base.collection_name ?? normalized.collection_name,\n    persona_contract_version: contractVersion,\n    tone_target: toneTarget,\n    brevity_target: brevityTarget,\n    style_must: Array.isArray(base.style_must) ? base.style_must : [],\n    style_must_not: Array.isArray(base.style_must_not) ? base.style_must_not : [],\n    safety_mode: safetyMode,\n  confidence_tier: confidenceTier,\n  recovery_mode: recoveryMode,\n    style_gate_pass: true,\n    style_gate_reason: 'scope_denied',\n  };\n}\nconst source = String(base.source ?? 'ntfy');\nconst decision = String(base.decision ?? 'unknown');\nconst response = String($json.response ?? '').trim();\nconst answer = response || 'I could not generate a general answer right now.';\nconst debugEnabled = true;\nconst score = Number(base.top_score ?? 0);\nconst scoreTxt = Number.isFinite(score) ? score.toFixed(3) : 'n/a';\nconst provider = String(base.web_provider ?? 'none');\nconst snippets = Number(base.snippet_count ?? 0);\nconst uxScore = Number(base.perceived_score ?? 0);\nconst uxScoreTxt = Number.isFinite(uxScore) ? uxScore.toFixed(2) : '0.00';\nconst uxLabel = String(base.perceived_label || 'neutral');\nconst styleGateEnabled = true;\nconst routeBudgetClass = (() => {\n  const decisionNorm = String(decision || '').toLowerCase();\n  const questionNorm = String(base.question || '').toLowerCase();\n  if (decisionNorm.startsWith('smalltalk')) return 'smalltalk';\n  if (decisionNorm.startsWith('explicit-rag') || decisionNorm.startsWith('rag-request') || /\\b(runbook|docs|checklist|phase\\s*1|day\\s*[1-7])\\b/.test(questionNorm)) return 'rag';\n  if (/\\b(ops|incident|alerts?|bridge health|service status|healthcheck|runbook step)\\b/.test(questionNorm)) return 'ops';\n  return 'general';\n})();\nconst gateLimitsByRoute = {\n  smalltalk: { short: 220, balanced: 520, detailed: 900 },\n  ops: { short: 260, balanced: 560, detailed: 940 },\n  rag: { short: 320, balanced: 920, detailed: 1600 },\n  general: { short: 280, balanced: 760, detailed: 1300 },\n};\nconst gateLimits = gateLimitsByRoute[routeBudgetClass] || gateLimitsByRoute.general;\nconst maxChars = gateLimits[brevityTarget] || gateLimits.balanced;\nconst overrunReason = `length_exceeded_${routeBudgetClass}`;\nconst runStyleGate = (text) => {\n  const value = String(text || '').trim();\n  const reasons = [];\n  if (/\b(as an ai language model|i cannot browse the web)\b/i.test(value)) reasons.push('disallowed_phrase');\n  if (value.length > maxChars) reasons.push(overrunReason);\n  if (confidenceTier === 'low' && !/\\b(based on available context|may be missing details|might be missing details|not enough information|insufficient information|strong rag matches were not found)\\b/i.test(value)) reasons.push('uncertainty_missing');\n  if (Boolean(base.correction_attempt) && !/\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\b/i.test(value)) {\n    reasons.push('correction_ack_missing');\n  }\n  return { pass: reasons.length === 0, reason: reasons[0] || 'ok' };\n};\nconst rewriteStyle = (text, reason) => {\n  const value = String(text || '').trim();\n  if (!value) return 'I could not generate a general answer right now.';\n  if (reason === 'correction_ack_missing') return `Thanks for the correction. ${value}`;\n  if (String(reason || '').startsWith('length_exceeded')) return value.slice(0, Math.max(100, maxChars - 3)).trimEnd() + '...';\n  if (reason === 'disallowed_phrase') return value.replace(/\b(as an ai language model|i cannot browse the web)\b/ig, 'I can help with available local and routed context');\n  return value;\n};\nlet styled = answer;\nif (recoveryMode && !/\\bi hear your frustration\\b/i.test(styled)) {\n  const restated = String(base.question || '').trim().slice(0, 160);\n  styled = `I hear your frustration. You want: ${restated || 'a corrected, direct answer'}. Next step: I will give one direct answer and one concrete follow-up action.\\n\\n${styled}`;\n}\nif (Boolean(base.correction_attempt) && !/\\b(thanks for (the )?correction|thanks for clarifying|you(?:'|’)re right|good catch)\\b/i.test(styled)) {\n  styled = `Thanks for the correction. ${styled}`;\n}\n\nif (confidenceTier === 'low' && !/\\b(based on available context|may be missing details)\\b/i.test(styled)) {\n  styled = `Based on available context, I may be missing details. ${styled}`;\n}\n\nlet gate = styleGateEnabled ? runStyleGate(styled) : { pass: true, reason: 'disabled' };\nif (styleGateEnabled && gate.pass && /__stylegate_disallowed_probe__/i.test(String(base.question || ''))) {\n  gate = { pass: false, reason: 'disallowed_phrase' };\n}\nif (styleGateEnabled && !gate.pass) {\n  const initialReason = gate.reason;\n  styled = rewriteStyle(styled, initialReason);\n  if (initialReason === 'correction_ack_missing') {\n    gate = { pass: true, reason: 'rewrite_correction_ack_missing' };\n  } else {\n    const retry = runStyleGate(styled);\n    gate = { pass: retry.pass, reason: retry.pass ? `rewrite_${initialReason}` : `fail_${retry.reason}` };\n  }\n}\n// TEST-ONLY: deterministic style-gate terminal fail probe for regression coverage.\nif (/__stylegate_force_fail__/i.test(String(base.question || ''))) {\n  gate = { pass: false, reason: 'fail_forced_probe' };\n}\nconst dbg = debugEnabled ? `\\n\\n[route:${decision} score:${scoreTxt} web:${provider} snippets:${snippets} ux:${uxLabel} ux_score:${uxScoreTxt} pc:${contractVersion} tone_target:${toneTarget} brevity:${brevityTarget} rb:${maxChars} safety:${safetyMode} conf:${confidenceTier} rm:${recoveryMode ? 'on' : 'off'} sg:${gate.pass ? 'pass' : 'fail'} sgr:${gate.reason}]` : '';\nreturn { reply: `${styled}${dbg}`, source, role: base.role, tenant_id: base.tenant_id, collection_name: base.collection_name, persona_contract_version: contractVersion, tone_target: toneTarget, brevity_target: brevityTarget, style_must: Array.isArray(base.style_must) ? base.style_must : [], style_must_not: Array.isArray(base.style_must_not) ? base.style_must_not : [], safety_mode: safetyMode, confidence_tier: confidenceTier, recovery_mode: recoveryMode, style_gate_pass: gate.pass, style_gate_reason: gate.reason };"
+        },
+        "id": "format_general_reply",
+        "name": "Format General Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3340,
+          560
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "source_is_telegram",
+                "leftValue": "={{$json.source}}",
+                "rightValue": "telegram",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_telegram_source",
+        "name": "If Telegram Source",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          3580,
+          360
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "var reply = String($json.reply ?? '').trim() || '✅ Received.';\nvar env = (typeof process !== 'undefined' && process && process.env) ? process.env : {};\nvar envDebugEnabled = String(env.STT_DEBUG_RESPONSE_ENABLED || 'false').toLowerCase() === 'true';\nvar requestDebugEnabled = Boolean($item(0).$node['Resolve Audio Query']?.json?.stt_debug_response_enabled);\nvar debugEnabled = envDebugEnabled || requestDebugEnabled;\nvar audio = $item(0).$node['Resolve Audio Query']?.json || {};\nvar memorySummary = String(audio.memory_summary ?? '').trim().slice(0, 1200);\nif (!debugEnabled) {\n  return { reply, memory_summary: memorySummary };\n}\n\nvar rawMinSpeaker = audio.memory_min_speaker_confidence;\nvar minSpeakerConfidence = (rawMinSpeaker === null || rawMinSpeaker === undefined || rawMinSpeaker === '') ? null : Number(rawMinSpeaker);\nreturn {\n  reply,\n  memory_summary: memorySummary,\n  debug: {\n    stt: {\n      has_audio: Boolean(audio.has_audio),\n      audio_url_present: Boolean(audio.audio_url),\n      transcription_error: String(audio.transcription_error ?? ''),\n      used_fallback_text: String(audio.question ?? '').includes('I could not transcribe usable text.'),\n    },\n    memory: {\n      voice_memory_opt_in: typeof audio.voice_memory_opt_in === 'boolean' ? audio.voice_memory_opt_in : null,\n      memory_write_mode: String(audio.memory_write_mode ?? ''),\n      raw_audio_persist: typeof audio.raw_audio_persist === 'boolean' ? audio.raw_audio_persist : null,\n      speaker_confidence: audio.speaker_confidence ?? null,\n      memory_min_speaker_confidence: Number.isFinite(minSpeakerConfidence) ? minSpeakerConfidence : null,\n      memory_write_allowed: typeof audio.memory_write_allowed === 'boolean' ? audio.memory_write_allowed : null,\n      memory_gate_blocked: Boolean(audio.memory_gate_blocked ?? false),\n      memory_enabled_effective: typeof audio.memory_enabled === 'boolean' ? audio.memory_enabled : null,\n    },\n  },\n};"
+        },
+        "id": "return_telegram_reply",
+        "name": "Return Telegram Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3820,
+          280
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "tenant_scope_violation_true",
+                "leftValue": "={{$json.tenant_scope_violation ? 'true' : 'false'}}",
+                "rightValue": "true",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "if_tenant_scope_violation",
+        "name": "If Tenant Scope Violation",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          700,
+          140
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_ALERT_TOPIC || 'ops-alerts'}?title=Tenant%20Scope%20Denied`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{`TENANT_SCOPE_DENIED user_id=${$json.user_id ?? 'unknown'} role=${$json.role ?? 'unknown'} requested=${$json.requested_tenant_id ?? 'unknown'} expected=${$json.expected_tenant_id ?? 'unknown'} effective=${$json.tenant_id ?? 'unknown'} source=${$json.source ?? 'unknown'} question=${String($json.question ?? '').slice(0, 180).replace(/\\n/g, ' ')}`}}",
+          "options": {}
+        },
+        "id": "post_scope_denied_alert",
+        "name": "Post Scope Denied Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          940,
+          140
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_REPLIES_TOPIC || 'ai-replies'}?title=AI%20Reply`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.reply}}",
+          "options": {}
+        },
+        "id": "post_rag_reply",
+        "name": "Post RAG Reply",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3820,
+          460
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "var routed = $item(0).$node['If Telegram Source']?.json || {};\nvar audio = $item(0).$node['Resolve Audio Query']?.json || {};\nvar reply = String(routed.reply ?? routed.message ?? '').trim() || '✅ Received.';\nvar memorySummary = String(audio.memory_summary ?? '').trim().slice(0, 1200);\nreturn { reply, memory_summary: memorySummary };"
+        },
+        "id": "return_routed_reply",
+        "name": "Return Routed Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4060,
+          460
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook RAG Query": {
+        "main": [
+          [
+            {
+              "node": "Normalize Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Query": {
+        "main": [
+          [
+            {
+              "node": "Resolve Audio Query",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "If Tenant Scope Violation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Audio Query": {
+        "main": [
+          [
+            {
+              "node": "Embed Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Embed Query": {
+        "main": [
+          [
+            {
+              "node": "Search Qdrant",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Search Qdrant": {
+        "main": [
+          [
+            {
+              "node": "Prepare Query",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Query": {
+        "main": [
+          [
+            {
+              "node": "If Smalltalk Mode",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Smalltalk Mode": {
+        "main": [
+          [
+            {
+              "node": "Format Smalltalk Reply",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "If Has Matches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Smalltalk Reply": {
+        "main": [
+          [
+            {
+              "node": "If Telegram Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Has Matches": {
+        "main": [
+          [
+            {
+              "node": "Build General Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Augment RAG Prompt Memory",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Augment RAG Prompt Memory": {
+        "main": [
+          [
+            {
+              "node": "Call Ollama Answer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Ollama Answer": {
+        "main": [
+          [
+            {
+              "node": "Format RAG Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format RAG Reply": {
+        "main": [
+          [
+            {
+              "node": "If Telegram Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build General Prompt": {
+        "main": [
+          [
+            {
+              "node": "If Needs Weather",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Needs Weather": {
+        "main": [
+          [
+            {
+              "node": "Fetch Weather",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "If Needs Web",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Weather": {
+        "main": [
+          [
+            {
+              "node": "Build Weather Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Weather Prompt": {
+        "main": [
+          [
+            {
+              "node": "Call Ollama General",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Needs Web": {
+        "main": [
+          [
+            {
+              "node": "Web Search",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Call Ollama General",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Web Search": {
+        "main": [
+          [
+            {
+              "node": "Build Web General Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Web General Prompt": {
+        "main": [
+          [
+            {
+              "node": "Call Ollama General",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Ollama General": {
+        "main": [
+          [
+            {
+              "node": "Format General Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format General Reply": {
+        "main": [
+          [
+            {
+              "node": "If Telegram Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Telegram Source": {
+        "main": [
+          [
+            {
+              "node": "Return Telegram Reply",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Post RAG Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Post RAG Reply": {
+        "main": [
+          [
+            {
+              "node": "Return Routed Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If Tenant Scope Violation": {
+        "main": [
+          [
+            {
+              "node": "Post Scope Denied Alert",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      }
+    },
+    "settings": {},
+    "staticData": null,
+    "meta": null,
+    "pinData": {},
+    "versionId": "395f78e3-1d89-4ffc-9fd4-2c81b355ea7f",
+    "activeVersionId": "395f78e3-1d89-4ffc-9fd4-2c81b355ea7f",
+    "versionCounter": 173,
+    "triggerCount": 1,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-02-27T11:58:20.289Z",
+        "createdAt": "2026-02-27T11:58:20.289Z",
+        "role": "workflow:owner",
+        "workflowId": "e2f4c63a-6ac9-46ce-9ee4-39d1d8de9128",
+        "projectId": "pEiCSQaD8DH3nn4P",
+        "project": {
+          "updatedAt": "2026-02-27T11:21:02.876Z",
+          "createdAt": "2026-02-27T11:21:02.876Z",
+          "id": "pEiCSQaD8DH3nn4P",
+          "name": "Unnamed Project",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "creatorId": "745fcd92-a35f-4e07-b82d-df3718d5a4bd"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

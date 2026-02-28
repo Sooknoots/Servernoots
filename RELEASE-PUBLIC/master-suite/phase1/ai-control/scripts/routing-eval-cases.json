@@ -1,0 +1,70 @@
+[
+  {
+    "name": "web_general_zero_trust",
+    "message": "What is zero trust networking?",
+    "expected_route_prefix": "default-web-first"
+  },
+  {
+    "name": "web_current_price",
+    "message": "Latest Nvidia stock price",
+    "expected_route_prefix": "default-web-first"
+  },
+  {
+    "name": "weather_live",
+    "message": "What is the weather in San Diego today?",
+    "expected_route_prefix": "weather-web-first"
+  },
+  {
+    "name": "rag_explicit_runbook",
+    "message": "From runbook docs, summarize Day 5 checklist progress",
+    "expected_route_prefix": "explicit-rag|rag-request-low-confidence-web-fallback",
+    "expected_contains": "rb:920"
+  },
+  {
+    "name": "rag_explicit_phase",
+    "message": "From Servernoots Phase 1 checklist, what is Day 4 progress?",
+    "expected_route_prefix": "explicit-rag|rag-request-low-confidence-web-fallback",
+    "expected_contains": "rb:920"
+  },
+  {
+    "name": "ops_route_budget_short",
+    "message": "Give ops bridge health summary right now",
+    "expected_route_prefix": "default-web-first",
+    "expected_contains": "rb:320",
+    "payload": {
+      "persona_pref_brevity": "short"
+    }
+  },
+  {
+    "name": "memory_enabled_token_check",
+    "message": "From my saved user context, what is my verification token? Reply with the token only.",
+    "expected_route_prefix": "default-web-first",
+    "expected_contains": "memcheck-7x9",
+    "payload": {
+      "memory_enabled": true,
+      "memory_summary": "Memory verification token: memcheck-7x9"
+    }
+  },
+  {
+    "name": "style_gate_correction_rewrite_smalltalk",
+    "message": "what do you know about me? that's wrong",
+    "expected_route_prefix": "smalltalk:user_profile|default-web-first",
+    "expected_contains": "Thanks for the correction.",
+    "expected_style_gate_pass": true,
+    "expected_style_gate_reason": "rewrite_correction_ack_missing"
+  },
+  {
+    "name": "style_gate_disallowed_rewrite_probe",
+    "message": "__stylegate_disallowed_probe__ explain zero trust quickly",
+    "expected_route_prefix": "default-web-first",
+    "expected_style_gate_pass": true,
+    "expected_style_gate_reason": "rewrite_disallowed_phrase"
+  },
+  {
+    "name": "style_gate_terminal_fail_probe",
+    "message": "__stylegate_force_fail__ explain zero trust networking",
+    "expected_route_prefix": "default-web-first|smalltalk",
+    "expected_style_gate_pass": false,
+    "expected_style_gate_reason": "fail_forced_probe"
+  }
+]

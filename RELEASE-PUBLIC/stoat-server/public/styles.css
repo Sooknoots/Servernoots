@@ -1,0 +1,167 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #1e1f22;
+  color: #f2f3f5;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #2b2d31;
+  border-right: 1px solid #1a1b1f;
+  padding: 12px;
+}
+
+.sidebar-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.channel-filter {
+  width: 100%;
+  background: #1e1f22;
+  border: 1px solid #3d4048;
+  color: #f2f3f5;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+
+.channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+}
+
+.channel-group-title {
+  margin-top: 8px;
+  margin-bottom: 2px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #a9adb5;
+}
+
+.channel-item {
+  border: 0;
+  text-align: left;
+  background: transparent;
+  color: #dbdee1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.channel-item:hover {
+  background: #35373c;
+}
+
+.channel-item.active {
+  background: #404249;
+  color: #ffffff;
+}
+
+.main {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+}
+
+.header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #1a1b1f;
+  font-weight: 700;
+}
+
+.messages {
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.message {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #2a2b2f;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #404249;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.author {
+  font-weight: 700;
+}
+
+.time {
+  color: #a9adb5;
+  font-size: 12px;
+}
+
+.content {
+  white-space: pre-wrap;
+  color: #e3e5e8;
+}
+
+.attachment {
+  margin-top: 8px;
+}
+
+.attachment img,
+.attachment video {
+  max-width: min(600px, 100%);
+  border-radius: 8px;
+  border: 1px solid #3d4048;
+}
+
+.attachment a {
+  color: #7ab8ff;
+}
+
+.pager {
+  padding: 8px 16px 16px;
+}
+
+.btn {
+  border: 1px solid #5865f2;
+  background: #5865f2;
+  color: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

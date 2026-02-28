@@ -1,0 +1,8 @@
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+COPY requirements-telegram.txt /tmp/requirements-telegram.txt
+RUN python -m pip install --no-cache-dir --require-hashes -r /tmp/requirements-telegram.txt
+
+CMD ["python", "/app/telegram_to_n8n.py"]

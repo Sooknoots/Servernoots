@@ -1,0 +1,30 @@
+[Unit]
+Description=Discord RAG Proxy HTTP Wrapper
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sook
+WorkingDirectory=/media/sook/Content/Servernoots/master-suite/phase1/ai-control
+Environment=PROXY_HOST=127.0.0.1
+Environment=PROXY_PORT=8099
+Environment=PROFILES_PATH=/media/sook/Content/Servernoots/master-suite/phase1/ai-control/work/discord-seed/discord_user_profiles.json
+Environment=N8N_BASE=http://127.0.0.1:5678
+Environment=RAG_WEBHOOK=/webhook/rag-query
+Environment=OPS_WEBHOOK=/webhook/ops-commands-ingest
+Environment=VOICE_WEBHOOK=/webhook/discord-voice-command
+Environment=VOICE_STATE_FILE=/media/sook/Content/Servernoots/master-suite/phase1/ai-control/logs/discord-voice-state.json
+Environment=VOICE_COOLDOWN_SECONDS=30
+Environment=VOICE_MODERATOR_ROLE_IDS=
+Environment=N8N_HEALTH_PATH=/healthz
+Environment=DISCORD_ALLOW_GUILD_IDS=
+Environment=DISCORD_ALLOW_CHANNEL_IDS=
+Environment=DISCORD_ALLOW_ROLE_IDS=
+Environment=DISCORD_AUDIT_LOG=/media/sook/Content/Servernoots/master-suite/phase1/ai-control/logs/discord-command-audit.jsonl
+ExecStart=/usr/bin/python3 /media/sook/Content/Servernoots/master-suite/phase1/ai-control/scripts/discord-rag-proxy-server.py --host ${PROXY_HOST} --port ${PROXY_PORT} --profiles ${PROFILES_PATH} --n8n-base ${N8N_BASE} --rag-webhook ${RAG_WEBHOOK} --ops-webhook ${OPS_WEBHOOK} --voice-webhook ${VOICE_WEBHOOK} --voice-state-file ${VOICE_STATE_FILE} --voice-cooldown-seconds ${VOICE_COOLDOWN_SECONDS} --voice-moderator-role-ids ${VOICE_MODERATOR_ROLE_IDS} --n8n-health-path ${N8N_HEALTH_PATH} --allow-guild-ids ${DISCORD_ALLOW_GUILD_IDS} --allow-channel-ids ${DISCORD_ALLOW_CHANNEL_IDS} --allow-role-ids ${DISCORD_ALLOW_ROLE_IDS} --audit-log ${DISCORD_AUDIT_LOG} --quiet
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "b2e6a3d1-8d8d-4e56-94cc-1a8d7a7b9b01",
+    "name": "Day4 - AI Chat Ingest",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ai-chat-ingest",
+          "responseMode": "onReceived"
+        },
+        "id": "webhook_ai_chat",
+        "webhookId": "ai-chat-ingest",
+        "name": "Webhook AI Chat",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          240,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const incoming = String($json.body?.message ?? $json.message ?? \"\").trim();\nconst userPrompt = incoming || 'Say hello from Servernoots.';\nreturn { userPrompt };"
+        },
+        "id": "build_prompt",
+        "name": "Build Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          520,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:11435/api/generate",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ model: 'qwen3-coder:30b', prompt: $json.userPrompt, stream: false, options: { num_predict: 96, temperature: 0.2 } }) }}",
+          "options": {}
+        },
+        "id": "call_ollama",
+        "name": "Call Ollama",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          760,
+          240
+        ],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const response = String($json.response ?? $json.body?.response ?? '').trim();\nif (response) {\n  return { reply: response };\n}\nconst errorMsg = String($json.message ?? $json.error ?? 'Ollama request failed').trim();\nreturn { reply: `AI temporarily unavailable: ${errorMsg}` };"
+        },
+        "id": "format_ai_reply",
+        "name": "Format AI Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1000,
+          240
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_REPLIES_TOPIC || 'ai-replies'}?title=AI%20Reply`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.reply}}",
+          "options": {}
+        },
+        "id": "post_ai_reply",
+        "name": "Post AI Reply",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1240,
+          240
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook AI Chat": {
+        "main": [
+          [
+            {
+              "node": "Build Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Prompt": {
+        "main": [
+          [
+            {
+              "node": "Call Ollama",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Call Ollama": {
+        "main": [
+          [
+            {
+              "node": "Format AI Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format AI Reply": {
+        "main": [
+          [
+            {
+              "node": "Post AI Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "staticData": null,
+    "tags": []
+  }
+]

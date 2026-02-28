@@ -1,0 +1,110 @@
+[
+  {
+    "id": "b7f2d9ce-55a7-4e3b-b56e-23f7ef0db202",
+    "name": "Day4 - Ops Commands Guarded",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ops-commands-ingest",
+          "responseMode": "onReceived"
+        },
+        "id": "webhook_ops",
+        "webhookId": "ops-commands-ingest",
+        "name": "Webhook Ops Commands",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          240,
+          440
+        ]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const body = $json.body || $json;\nconst role = String(body.role ?? 'user').toLowerCase();\nconst cmd = String(body.message ?? '').trim();\nconst token = (cmd.split(/\\s+/)[0] || '').trim().toLowerCase();\nconst normalizedToken = token.startsWith('/') ? token : '/ops';\n\nconst payloadAllowlist = Array.isArray(body.policy_role_command_allowlist)\n  ? body.policy_role_command_allowlist.map((value) => String(value ?? '').trim().toLowerCase()).filter(Boolean)\n  : [];\n\nconst fallbackAllowlist = role === 'admin' ? ['/ops'] : [];\nconst effectiveAllowlist = payloadAllowlist.length ? payloadAllowlist : fallbackAllowlist;\nif (!effectiveAllowlist.includes(normalizedToken)) {\n  return { opsMessage: `ops command denied for role=${role} token=${normalizedToken} policy_allowlist=${effectiveAllowlist.join(',') || 'none'}` };\n}\n\nconst rateWindowRaw = Number(body.policy_rate_limit_window_seconds ?? 0);\nconst rateMaxRaw = Number(body.policy_rate_limit_max_requests ?? 0);\nconst rateWindow = Number.isFinite(rateWindowRaw) && rateWindowRaw > 0 ? Math.floor(rateWindowRaw) : 0;\nconst rateMax = Number.isFinite(rateMaxRaw) && rateMaxRaw > 0 ? Math.floor(rateMaxRaw) : 0;\n\nif (rateWindow > 0 && rateMax > 0 && typeof $getWorkflowStaticData === 'function') {\n  const store = $getWorkflowStaticData('global');\n  if (!store.__opsRateLimiter || typeof store.__opsRateLimiter !== 'object') {\n    store.__opsRateLimiter = {};\n  }\n\n  const source = String(body.source ?? 'unknown').toLowerCase();\n  const userId = String(body.user_id ?? body.chat_id ?? 'unknown').trim();\n  const key = `${source}:${userId}`;\n  const now = Math.floor(Date.now() / 1000);\n  const cutoff = now - rateWindow;\n  const prior = Array.isArray(store.__opsRateLimiter[key]) ? store.__opsRateLimiter[key] : [];\n  const recent = prior.filter((ts) => Number.isFinite(Number(ts)) && Number(ts) >= cutoff);\n\n  if (recent.length >= rateMax) {\n    const retryAfter = Math.max(1, rateWindow - (now - Number(recent[0] || now)));\n    store.__opsRateLimiter[key] = recent;\n    return {\n      opsMessage: `ops command rate-limited user=${userId} role=${role} limit=${rateMax}/${rateWindow}s retry_after=${retryAfter}s`,\n    };\n  }\n\n  recent.push(now);\n  store.__opsRateLimiter[key] = recent;\n}\n\nconst guidance = `ops command received: ${cmd} | guarded execution available via safe_command.sh`;\nreturn { opsMessage: guidance };"
+        },
+        "id": "format_ops",
+        "name": "Format Ops Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          560,
+          440
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_ALERT_TOPIC || 'ops-alerts'}`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.opsMessage}}",
+          "options": {}
+        },
+        "id": "post_ops",
+        "name": "Post Ops Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          820,
+          440
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{`${$env.NTFY_BASE || 'http://ntfy'}/${$env.NTFY_AUDIT_TOPIC || 'ai-audit'}`}}",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "text/plain",
+          "body": "={{$json.opsMessage}}",
+          "options": {}
+        },
+        "id": "post_ai_audit",
+        "name": "Post AI Audit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          820,
+          620
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Ops Commands": {
+        "main": [
+          [
+            {
+              "node": "Format Ops Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Ops Result": {
+        "main": [
+          [
+            {
+              "node": "Post Ops Alert",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Post AI Audit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "staticData": null,
+    "tags": []
+  }
+]

@@ -1,0 +1,33 @@
+{
+	{$STOAT_ACME_EMAIL}
+}
+
+
+:80 {
+	encode zstd gzip
+	log
+
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	reverse_proxy stoat-server:8787
+}
+
+:443 {
+	encode zstd gzip
+	tls internal
+	log
+
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	reverse_proxy stoat-server:8787
+}
